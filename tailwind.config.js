@@ -1,0 +1,45 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    './app/**/*.{js,jsx,ts,tsx}',
+    './components/**/*.{js,jsx,ts,tsx}',
+    './mocks/**/*.{js,jsx,ts,tsx}',
+  ],
+  presets: [require('nativewind/preset')],
+  theme: {
+    extend: {
+      colors: {
+        'bg-primary': '#faf9f5',
+        'bg-secondary': '#ffffff',
+        'bg-tertiary': '#f4f2ea',
+        'border-color': '#e8e4d6',
+        'border-strong': '#d4cdb8',
+        'text-primary': '#1f1e1c',
+        'text-secondary': '#5e5b54',
+        'text-tertiary': '#8e8b82',
+        accent: '#D97757',
+        'accent-pressed': '#C36548',
+        success: '#3F8F6E',
+        warning: '#C69A2C',
+        error: '#C04C36',
+        'polymer-hdpe': '#3F6FA8',
+        'polymer-pp': '#C9743A',
+        'polymer-ldpe': '#4F8A6A',
+      },
+      fontFamily: {
+        sans: ['Inter_500Medium', 'Inter', 'system-ui', 'sans-serif'],
+        'inter-regular': ['Inter_400Regular', 'Inter', 'sans-serif'],
+        'inter-medium': ['Inter_500Medium', 'Inter', 'sans-serif'],
+        'inter-semibold': ['Inter_600SemiBold', 'Inter', 'sans-serif'],
+        'inter-bold': ['Inter_700Bold', 'Inter', 'sans-serif'],
+        'inter-extrabold': ['Inter_800ExtraBold', 'Inter', 'sans-serif'],
+        'inter-black': ['Inter_900Black', 'Inter', 'sans-serif'],
+        serif: ['SourceSerif4_600SemiBold', 'Georgia', 'serif'],
+        'serif-medium': ['SourceSerif4_500Medium', 'Georgia', 'serif'],
+        'serif-semibold': ['SourceSerif4_600SemiBold', 'Georgia', 'serif'],
+        'serif-bold': ['SourceSerif4_700Bold', 'Georgia', 'serif'],
+      },
+    },
+  },
+  plugins: [],
+};

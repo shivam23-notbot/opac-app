@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# temp test artifacts
+.tmp-test/
+
+# design assets (large binary files)
+design_handoff_opac_light_theme/
