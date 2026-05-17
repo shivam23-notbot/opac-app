@@ -5,7 +5,6 @@ import type { Worker, AdvancePayment } from '@/types';
 import { generateId } from '@/lib/utils';
 import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
-import { SEED_WORKERS, SEED_ADVANCES } from '@/mocks/workers';
 
 interface WorkersState {
   workers: Worker[];
@@ -68,43 +67,11 @@ export const useWorkersStore = create<WorkersState>()(
           supabase.from('workers').select('*'),
           supabase.from('advances').select('*'),
         ]);
-
-        if (!wData) return;
-
-        if (wData.length === 0) {
-          // Seed workers
-          await supabase.from('workers').insert(
-            SEED_WORKERS.map((w) => ({
-              id: w.id,
-              name: w.name,
-              daily_wage: w.dailyWage,
-              previous_balance: w.previousBalance,
-              active: w.active,
-              settled: w.settled ?? false,
-              created_at: w.createdAt,
-            }))
-          );
-          // Seed advances
-          if (SEED_ADVANCES.length > 0) {
-            await supabase.from('advances').insert(
-              SEED_ADVANCES.map((a) => ({
-                id: a.id,
-                worker_id: a.workerId,
-                amount: a.amount,
-                date: a.date,
-                note: a.note,
-                recorded_by: a.recordedBy,
-              }))
-            );
-          }
-          set({ workers: SEED_WORKERS, advances: SEED_ADVANCES, _hasHydrated: true });
-        } else {
-          set({
-            workers: wData.map(rowToWorker),
-            advances: (aData ?? []).map(rowToAdvance),
-            _hasHydrated: true,
-          });
-        }
+        set({
+          workers: (wData ?? []).map(rowToWorker),
+          advances: (aData ?? []).map(rowToAdvance),
+          _hasHydrated: true,
+        });
       },
 
       addWorker: async ({ name, dailyWage, previousBalance }, _userId) => {
@@ -129,7 +96,7 @@ export const useWorkersStore = create<WorkersState>()(
         set((s) => ({
           workers: s.workers.map((w) => (w.id === id ? { ...w, active: false, removedAt } : w)),
         }));
-        supabase.from('workers').update({ active: false, removed_at: removedAt }).eq('id', id);
+        supabase.from('workers').update({ active: false, removed_at: removedAt }).eq('id', id).then(() => {});
       },
 
       settleWorker: (id) => {
@@ -137,7 +104,7 @@ export const useWorkersStore = create<WorkersState>()(
         set((s) => ({
           workers: s.workers.map((w) => (w.id === id ? { ...w, settled: true, settledAt } : w)),
         }));
-        supabase.from('workers').update({ settled: true, settled_at: settledAt }).eq('id', id);
+        supabase.from('workers').update({ settled: true, settled_at: settledAt }).eq('id', id).then(() => {});
       },
 
       unsettleWorker: (id) => {
@@ -149,21 +116,21 @@ export const useWorkersStore = create<WorkersState>()(
         supabase
           .from('workers')
           .update({ settled: false, settled_at: null })
-          .eq('id', id);
+          .eq('id', id).then(() => {});
       },
 
       addAdvance: ({ workerId, amount, date, note }, userId) => {
         const id = generateId();
         const advance: AdvancePayment = { id, workerId, amount, date, note, recordedBy: userId };
         set((s) => ({ advances: [...s.advances, advance] }));
+        // recorded_by is filled by the DB default (auth.uid()::text).
         supabase.from('advances').insert({
           id,
           worker_id: workerId,
           amount,
           date,
           note,
-          recorded_by: userId,
-        });
+        }).then(() => {});
       },
 
       getActiveWorkers: () => get().workers.filter((w) => w.active),

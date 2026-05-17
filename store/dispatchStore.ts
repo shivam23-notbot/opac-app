@@ -5,7 +5,6 @@ import type { DispatchEntry } from '@/types';
 import { todayISO } from '@/lib/date';
 import { useInventoryStore } from './inventoryStore';
 import { supabase } from '@/lib/supabase';
-import { SEED_DISPATCHES } from '@/mocks/dispatches';
 
 interface DispatchState {
   entries: DispatchEntry[];
@@ -41,30 +40,13 @@ export const useDispatchStore = create<DispatchState>()(
       hydrate: async () => {
         const { data } = await supabase.from('dispatch_entries').select('*');
         if (!data) return;
-        if (data.length === 0 && SEED_DISPATCHES.length > 0) {
-          await supabase.from('dispatch_entries').insert(
-            SEED_DISPATCHES.map((e) => ({
-              id: e.id,
-              date: e.date,
-              time: e.time,
-              product_id: e.productId,
-              product_code: e.productCode,
-              bags: e.bags,
-              recipient: e.recipient,
-              vehicle_number: e.vehicleNumber,
-              notes: e.notes,
-              recorded_by: e.recordedBy,
-            }))
-          );
-          set({ entries: SEED_DISPATCHES });
-        } else {
-          set({ entries: data.map(rowToEntry) });
-        }
+        set({ entries: data.map(rowToEntry) });
       },
 
       record: (entry) => {
         set((state) => ({ entries: [...state.entries, entry] }));
         useInventoryStore.getState().decrementStock(entry.productId, entry.bags);
+        // recorded_by is filled by the DB default (auth.uid()::text).
         supabase.from('dispatch_entries').insert({
           id: entry.id,
           date: entry.date,
@@ -75,8 +57,7 @@ export const useDispatchStore = create<DispatchState>()(
           recipient: entry.recipient,
           vehicle_number: entry.vehicleNumber,
           notes: entry.notes,
-          recorded_by: entry.recordedBy,
-        });
+        }).then(() => {});
       },
 
       editEntry: (id, patch) => {
@@ -106,7 +87,7 @@ export const useDispatchStore = create<DispatchState>()(
             vehicle_number: patch.vehicleNumber ?? prev.vehicleNumber,
             notes: patch.notes ?? prev.notes,
           })
-          .eq('id', id);
+          .eq('id', id).then(() => {});
       },
 
       deleteEntry: (id) => {
@@ -115,7 +96,7 @@ export const useDispatchStore = create<DispatchState>()(
           useInventoryStore.getState().restoreStock(entry.productId, entry.bags);
         }
         set((state) => ({ entries: state.entries.filter((e) => e.id !== id) }));
-        supabase.from('dispatch_entries').delete().eq('id', id);
+        supabase.from('dispatch_entries').delete().eq('id', id).then(() => {});
       },
 
       getTodayEntries: () => get().entries.filter((e) => e.date === todayISO()),

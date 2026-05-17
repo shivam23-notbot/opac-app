@@ -60,18 +60,17 @@ export const useAttendanceStore = create<AttendanceState>()(
             },
           },
         }));
-        // Upsert to Supabase
+        // recorded_by is filled by the DB default (auth.uid()::text).
         supabase.from('attendance').upsert(
           {
             id: generateId(),
             date,
             employee_id: employeeId,
             status: JSON.stringify(status),
-            recorded_by: userId,
             recorded_at: recordedAt,
           },
           { onConflict: 'date,employee_id' }
-        );
+        ).then(() => {});
       },
 
       getRecordsForDate: (date) => get().records[date] ?? {},

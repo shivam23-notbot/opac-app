@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Product, MaterialUsage } from '@/types';
-import { PRODUCTS as SEED_PRODUCTS } from '@/mocks/products';
 import { todayISO } from '@/lib/date';
 import { generateId } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -75,41 +74,6 @@ export const useInventoryStore = create<InventoryState>()(
       products: [],
 
       hydrate: async () => {
-        const { data: existing } = await supabase.from('products').select('id');
-        if (!existing) return;
-
-        if (existing.length === 0) {
-          // Seed products and history
-          await supabase.from('products').insert(
-            SEED_PRODUCTS.map((p) => ({
-              id: p.id,
-              code: p.code,
-              name: p.name,
-              polymer: p.polymer,
-              current_bags: p.currentBags,
-              active: p.active ?? true,
-              last_updated: p.lastUpdated,
-            }))
-          );
-          for (const p of SEED_PRODUCTS) {
-            if (p.stockHistory.length > 0) {
-              await supabase.from('stock_history').insert(
-                p.stockHistory.map((h) => ({
-                  id: h.id,
-                  product_id: p.id,
-                  date: h.date,
-                  opening_bags: h.openingBags,
-                  closing_bags: h.closingBags,
-                  materials_used: h.materialsUsed,
-                  notes: h.notes,
-                  recorded_by: h.recordedBy ?? 'seed',
-                  recorded_at: h.recordedAt ?? new Date().toISOString(),
-                }))
-              );
-            }
-          }
-        }
-
         const products = await buildProducts();
         set({ products });
       },
@@ -136,7 +100,7 @@ export const useInventoryStore = create<InventoryState>()(
               existingIdx >= 0
                 ? p.stockHistory.map((e, i) => (i === existingIdx ? entry : e))
                 : [...p.stockHistory, entry];
-            // Sync to Supabase
+            // recorded_by is filled by the DB default (auth.uid()::text).
             supabase.from('stock_history').upsert(
               {
                 id: entry.id,
@@ -146,15 +110,14 @@ export const useInventoryStore = create<InventoryState>()(
                 closing_bags: closingBags,
                 materials_used: materialsUsed,
                 notes,
-                recorded_by: recordedBy ?? 'unknown',
                 recorded_at: now,
               },
               { onConflict: 'product_id,date' }
-            );
+            ).then(() => {});
             supabase
               .from('products')
               .update({ current_bags: closingBags, last_updated: now })
-              .eq('id', productId);
+              .eq('id', productId).then(() => {});
             return { ...p, currentBags: closingBags, lastUpdated: now, stockHistory: newHistory };
           }),
         }));
@@ -174,7 +137,7 @@ export const useInventoryStore = create<InventoryState>()(
           supabase
             .from('products')
             .update({ current_bags: Math.max(0, product.currentBags - bags), last_updated: now })
-            .eq('id', productId);
+            .eq('id', productId).then(() => {});
         }
       },
 
@@ -192,7 +155,7 @@ export const useInventoryStore = create<InventoryState>()(
           supabase
             .from('products')
             .update({ current_bags: product.currentBags + bags, last_updated: now })
-            .eq('id', productId);
+            .eq('id', productId).then(() => {});
         }
       },
 
@@ -242,8 +205,9 @@ export const useInventoryStore = create<InventoryState>()(
           current_bags: currentBags,
           active: true,
           last_updated: now,
-        });
+        }).then(() => {});
         if (initialEntry.length > 0) {
+          // recorded_by is filled by the DB default (auth.uid()::text).
           supabase.from('stock_history').insert({
             id: initialEntry[0].id,
             product_id: id,
@@ -252,9 +216,8 @@ export const useInventoryStore = create<InventoryState>()(
             closing_bags: currentBags,
             materials_used: [],
             notes: 'Opening stock',
-            recorded_by: recordedBy ?? 'unknown',
             recorded_at: now,
-          });
+          }).then(() => {});
         }
       },
 
@@ -271,12 +234,12 @@ export const useInventoryStore = create<InventoryState>()(
             );
             const isLatest = entry.date === latestDate;
             const newBags = isLatest ? entry.openingBags : p.currentBags;
-            supabase.from('stock_history').delete().eq('id', entryId);
+            supabase.from('stock_history').delete().eq('id', entryId).then(() => {});
             if (isLatest) {
               supabase
                 .from('products')
                 .update({ current_bags: newBags, last_updated: new Date().toISOString() })
-                .eq('id', productId);
+                .eq('id', productId).then(() => {});
             }
             return { ...p, currentBags: newBags, stockHistory: remaining, lastUpdated: new Date().toISOString() };
           }),
@@ -287,14 +250,14 @@ export const useInventoryStore = create<InventoryState>()(
         set((state) => ({
           products: state.products.map((p) => (p.id === productId ? { ...p, active: false } : p)),
         }));
-        supabase.from('products').update({ active: false }).eq('id', productId);
+        supabase.from('products').update({ active: false }).eq('id', productId).then(() => {});
       },
 
       unretireProduct: (productId) => {
         set((state) => ({
           products: state.products.map((p) => (p.id === productId ? { ...p, active: true } : p)),
         }));
-        supabase.from('products').update({ active: true }).eq('id', productId);
+        supabase.from('products').update({ active: true }).eq('id', productId).then(() => {});
       },
 
       getActiveProducts: () => get().products.filter((p) => p.active !== false),

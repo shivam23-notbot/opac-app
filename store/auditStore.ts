@@ -53,16 +53,17 @@ export const useAuditStore = create<AuditState>()(
         const timestamp = new Date().toISOString();
         const newLog: AuditLog = { ...entry, id, timestamp };
         set((s) => ({ logs: [...s.logs, newLog] }));
+        // user_id is filled by the DB default (auth.uid()::text); never trust
+        // a client-supplied value.
         supabase.from('audit_logs').insert({
           id,
           timestamp,
-          user_id: entry.userId,
           user_name: entry.userName,
           action: entry.action,
           entity: entry.entity,
           entity_id: entry.entityId,
           detail: entry.detail,
-        });
+        }).then(() => {});
       },
 
       getLogsForEntity: (entity, entityId) =>
