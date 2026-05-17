@@ -26,6 +26,8 @@
     },
     "web": {
       "bundler": "metro",
+      "output": "single",
+      "name": "Opac Ops",
       "favicon": "./assets/favicon.png"
     },
     "plugins": ["expo-router", "expo-font"]

@@ -18,21 +18,28 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleLogin = () => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
       showToast('error', 'Please enter email and password');
       return;
     }
-    const success = login(email, password);
-    if (!success) {
-      showToast('error', 'Invalid email or password');
-      return;
-    }
-    const role = useAuthStore.getState().role;
-    if (role === 'admin') {
-      router.replace('/(admin)/dashboard');
-    } else {
-      router.replace('/(worker)/dashboard');
+    setSubmitting(true);
+    try {
+      const success = await login(email, password);
+      if (!success) {
+        showToast('error', 'Invalid email or password');
+        return;
+      }
+      const role = useAuthStore.getState().role;
+      if (role === 'admin') {
+        router.replace('/(admin)/dashboard');
+      } else {
+        router.replace('/(worker)/dashboard');
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -48,6 +55,7 @@ export default function LoginScreen() {
             padding: 24,
             paddingTop: insets.top + 48,
             paddingBottom: 120,
+            ...(Platform.OS === 'web' && { maxWidth: 480, alignSelf: 'center', width: '100%' }),
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -122,7 +130,12 @@ export default function LoginScreen() {
               secureTextEntry
             />
             <View style={{ marginTop: 8 }}>
-              <PrimaryButton label="Log In" onPress={handleLogin} size="lg" />
+              <PrimaryButton
+                label={submitting ? 'Signing in…' : 'Log In'}
+                onPress={handleLogin}
+                size="lg"
+                disabled={submitting}
+              />
             </View>
           </Card>
 
