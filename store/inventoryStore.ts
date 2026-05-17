@@ -136,7 +136,7 @@ export const useInventoryStore = create<InventoryState>()(
         if (product) {
           supabase
             .from('products')
-            .update({ current_bags: Math.max(0, product.currentBags - bags), last_updated: now })
+            .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
       },
@@ -154,7 +154,7 @@ export const useInventoryStore = create<InventoryState>()(
         if (product) {
           supabase
             .from('products')
-            .update({ current_bags: product.currentBags + bags, last_updated: now })
+            .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
       },
