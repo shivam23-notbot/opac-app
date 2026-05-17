@@ -1,4 +1,4 @@
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { Tabs, Redirect, usePathname, useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
 import {
@@ -11,6 +11,7 @@ import {
   UserCog,
 } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 function Sidebar() {
   const pathname = usePathname();
@@ -140,12 +141,13 @@ function Sidebar() {
 
 export default function AdminLayout() {
   const role = useAuthStore((s) => s.role);
+  const isMobile = useIsMobile();
 
   if (role !== 'admin') {
     return <Redirect href="/(auth)/login" />;
   }
 
-  if (Platform.OS === 'web') {
+  if (!isMobile) {
     return (
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: COLORS.bgPrimary }}>
         <Sidebar />

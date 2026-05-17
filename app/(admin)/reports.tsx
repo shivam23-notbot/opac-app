@@ -33,6 +33,7 @@ import {
   FileText,
 } from 'lucide-react-native';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 type ReportTab = 'salary' | 'production' | 'dispatch' | 'audit';
 
@@ -295,6 +296,7 @@ function DatePickerModal({
 
 export default function ReportsScreen() {
   const insets = useSafeAreaInsets();
+  const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState<ReportTab>('salary');
   const [dateFrom, setDateFrom] = useState(subtractDays(30));
   const [dateTo, setDateTo] = useState(todayISO());
@@ -501,15 +503,19 @@ export default function ReportsScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.bgPrimary }}
-      contentContainerStyle={{ paddingTop: insets.top + 20, padding: 20, paddingBottom: 40 }}
+      contentContainerStyle={{
+        paddingTop: insets.top + 20,
+        padding: isMobile ? 16 : 20,
+        paddingBottom: isMobile ? 100 : 40,
+      }}
     >
       <Text
         style={{
           color: COLORS.textPrimary,
           fontFamily: FONTS.serifSemibold,
-          fontSize: 28,
+          fontSize: isMobile ? 24 : 28,
           letterSpacing: -0.6,
-          marginBottom: 20,
+          marginBottom: isMobile ? 16 : 20,
         }}
       >
         Reports
@@ -530,8 +536,8 @@ export default function ReportsScreen() {
         onClose={() => setPickerTarget(null)}
       />
 
-      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-        <View style={{ flex: 1 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        <View style={{ flex: 1, minWidth: 140 }}>
           <Text
             style={{
               color: COLORS.textTertiary,
@@ -565,7 +571,7 @@ export default function ReportsScreen() {
             </Text>
           </Pressable>
         </View>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 140 }}>
           <Text
             style={{
               color: COLORS.textTertiary,
@@ -1201,7 +1207,171 @@ export default function ReportsScreen() {
         </View>
       )}
 
-      {activeTab === 'production' && (
+      {activeTab === 'production' && isMobile && (
+        <View>
+          {productionRows.length === 0 && (
+            <View
+              style={{
+                padding: 24,
+                alignItems: 'center',
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+              }}
+            >
+              <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>
+                No production records in range
+              </Text>
+            </View>
+          )}
+          {productionRows.map((r, i) => (
+            <View
+              key={i}
+              style={{
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+                padding: 12,
+                marginBottom: 8,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                <Text
+                  style={{
+                    color: COLORS.textPrimary,
+                    fontFamily: 'ui-monospace',
+                    fontSize: 13,
+                    fontWeight: '700',
+                  }}
+                >
+                  {r.productCode}
+                </Text>
+                <Text
+                  style={{
+                    color: COLORS.textTertiary,
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 11,
+                  }}
+                >
+                  {r.date}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 9,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Open
+                  </Text>
+                  <Text
+                    style={{
+                      color: COLORS.textSecondary,
+                      fontFamily: FONTS.sansSemibold,
+                      fontSize: 13,
+                    }}
+                  >
+                    {r.openingBags}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 9,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Close
+                  </Text>
+                  <Text
+                    style={{
+                      color: COLORS.textSecondary,
+                      fontFamily: FONTS.sansSemibold,
+                      fontSize: 13,
+                    }}
+                  >
+                    {r.closingBags}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 9,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Δ bags
+                  </Text>
+                  <Text
+                    style={{
+                      color: r.delta >= 0 ? COLORS.accent : COLORS.error,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 13,
+                    }}
+                  >
+                    {r.delta >= 0 ? '+' : ''}
+                    {r.delta}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 9,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Δ kg
+                  </Text>
+                  <Text
+                    style={{
+                      color: r.deltaKg >= 0 ? COLORS.accent : COLORS.error,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 13,
+                    }}
+                  >
+                    {r.deltaKg}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={{
+                  color: COLORS.textTertiary,
+                  fontFamily: FONTS.sansMedium,
+                  fontSize: 10,
+                  marginTop: 4,
+                }}
+              >
+                By {r.recordedBy}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {activeTab === 'production' && !isMobile && (
         <View
           style={{
             backgroundColor: COLORS.bgSecondary,
@@ -1307,7 +1477,112 @@ export default function ReportsScreen() {
         </View>
       )}
 
-      {activeTab === 'dispatch' && (
+      {activeTab === 'dispatch' && isMobile && (
+        <View>
+          {dispatchRows.length === 0 && (
+            <View
+              style={{
+                padding: 24,
+                alignItems: 'center',
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+              }}
+            >
+              <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>
+                No dispatch records in range
+              </Text>
+            </View>
+          )}
+          {dispatchRows.map((r) => (
+            <View
+              key={r.id}
+              style={{
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+                padding: 12,
+                marginBottom: 8,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 6,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text
+                    style={{
+                      color: COLORS.textPrimary,
+                      fontFamily: 'ui-monospace',
+                      fontSize: 13,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {r.productCode}
+                  </Text>
+                  <Text
+                    style={{
+                      color: COLORS.textPrimary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 13,
+                    }}
+                  >
+                    · {r.bags} bags
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    color: COLORS.textTertiary,
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 11,
+                  }}
+                >
+                  {r.date}
+                </Text>
+              </View>
+              <Text
+                style={{
+                  color: COLORS.textSecondary,
+                  fontFamily: FONTS.sansSemibold,
+                  fontSize: 12,
+                  marginBottom: 2,
+                }}
+                numberOfLines={1}
+              >
+                {r.recipient}
+              </Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                <Text
+                  style={{
+                    color: COLORS.textTertiary,
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 11,
+                  }}
+                >
+                  {r.vehicleNumber ?? '—'}
+                </Text>
+                <Text
+                  style={{
+                    color: COLORS.textTertiary,
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 10,
+                  }}
+                >
+                  By {r.recordedBy ?? '—'}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {activeTab === 'dispatch' && !isMobile && (
         <View
           style={{
             backgroundColor: COLORS.bgSecondary,
@@ -1403,7 +1678,87 @@ export default function ReportsScreen() {
         </View>
       )}
 
-      {activeTab === 'audit' && (
+      {activeTab === 'audit' && isMobile && (
+        <View>
+          {auditRows.length === 0 && (
+            <View
+              style={{
+                padding: 24,
+                alignItems: 'center',
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+              }}
+            >
+              <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>
+                No audit entries in range
+              </Text>
+            </View>
+          )}
+          {auditRows.map((l) => (
+            <View
+              key={l.id}
+              style={{
+                backgroundColor: COLORS.bgSecondary,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+                padding: 12,
+                marginBottom: 8,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginBottom: 4,
+                }}
+              >
+                <Text
+                  style={{
+                    color: COLORS.textPrimary,
+                    fontFamily: FONTS.sansBold,
+                    fontSize: 12,
+                  }}
+                >
+                  {l.action.replace(/_/g, ' ')}
+                </Text>
+                <Text
+                  style={{
+                    color: COLORS.textTertiary,
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 10,
+                  }}
+                >
+                  {l.timestamp.slice(0, 16).replace('T', ' ')}
+                </Text>
+              </View>
+              <Text
+                style={{
+                  color: COLORS.textSecondary,
+                  fontFamily: FONTS.sansMedium,
+                  fontSize: 12,
+                  marginBottom: 4,
+                }}
+              >
+                {l.detail}
+              </Text>
+              <Text
+                style={{
+                  color: COLORS.textTertiary,
+                  fontFamily: FONTS.sansSemibold,
+                  fontSize: 10,
+                }}
+              >
+                by {l.userName}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {activeTab === 'audit' && !isMobile && (
         <View
           style={{
             backgroundColor: COLORS.bgSecondary,
