@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -49,17 +49,23 @@ export default function RootLayout() {
     ]).catch(() => {});
   }, []);
 
-  const [fontsLoaded] = useInter({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-    Inter_800ExtraBold,
-    Inter_900Black,
-    SourceSerif4_500Medium,
-    SourceSerif4_600SemiBold,
-    SourceSerif4_700Bold,
-  });
+  const [fontsLoadedNative] = useInter(
+    Platform.OS !== 'web'
+      ? {
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
+          Inter_800ExtraBold,
+          Inter_900Black,
+          SourceSerif4_500Medium,
+          SourceSerif4_600SemiBold,
+          SourceSerif4_700Bold,
+        }
+      : {}
+  );
+
+  const fontsLoaded = Platform.OS === 'web' || fontsLoadedNative;
 
   useEffect(() => {
     if (fontsLoaded) {
