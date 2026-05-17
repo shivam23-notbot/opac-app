@@ -16,6 +16,7 @@ import { useDispatchStore } from '@/store/dispatchStore';
 import { useWorkersStore } from '@/store/workersStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useAuthStore } from '@/store/authStore';
+import { useUsersStore } from '@/store/usersStore';
 import { useUiStore } from '@/store/uiStore';
 import { bagsToKg } from '@/lib/units';
 import { subtractDays, todayISO } from '@/lib/date';
@@ -317,6 +318,7 @@ export default function ReportsScreen() {
   const unsettleWorker = useWorkersStore((s) => s.unsettleWorker);
   const logAudit = useAuditStore((s) => s.log);
   const authUser = useAuthStore((s) => s.user);
+  const displayNameFor = useUsersStore((s) => s.displayNameFor);
   const showToast = useUiStore((s) => s.showToast);
 
   const makeRow = (worker: Worker) => {
@@ -375,9 +377,8 @@ export default function ReportsScreen() {
     try {
       await generateWorkerMonthlyPDF(worker, salaryMonth, records, allAdvances);
       showToast('success', `${worker.name} · ${monthLabel(salaryMonth)} PDF ready`);
-    } catch (e) {
+    } catch {
       showToast('error', 'Could not generate PDF');
-      console.warn('PDF error', e);
     }
   };
 
@@ -391,8 +392,8 @@ export default function ReportsScreen() {
       try {
         await generateWorkerMonthlyPDF(row.worker, salaryMonth, records, allAdvances);
         ok++;
-      } catch (e) {
-        console.warn('PDF error for', row.worker.name, e);
+      } catch {
+        // PDF generation failed for this worker; reflected in ok/total count below.
       }
     }
     showToast(
@@ -438,14 +439,15 @@ export default function ReportsScreen() {
           closingBags: h.closingBags,
           delta: h.closingBags - h.openingBags,
           deltaKg: bagsToKg(h.closingBags - h.openingBags),
-          recordedBy: h.recordedBy ?? '—',
+          recordedBy: h.recordedBy ? displayNameFor(h.recordedBy) : '—',
         }))
     )
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const dispatchRows = entries
     .filter((e) => e.date >= dateFrom && e.date <= dateTo)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((e) => ({ ...e, recordedBy: e.recordedBy ? displayNameFor(e.recordedBy) : '—' }));
 
   const auditRows = [...auditLogs]
     .filter((l) => l.timestamp.slice(0, 10) >= dateFrom && l.timestamp.slice(0, 10) <= dateTo)

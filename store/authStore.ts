@@ -2,14 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { User, UserRole } from '@/types';
-import { useUsersStore } from './usersStore';
+import { supabase } from '@/lib/supabase';
 
 interface AuthState {
   user: User | null;
   role: UserRole | null;
   _hasHydrated: boolean;
-  login: (email: string, password: string) => boolean;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<boolean>;
+  logout: () => Promise<void>;
   setHasHydrated: (value: boolean) => void;
 }
 
@@ -19,14 +19,36 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       role: null,
       _hasHydrated: false,
-      login: (email, password) => {
-        const found = useUsersStore.getState().findByCredentials(email, password);
-        if (!found) return false;
-        const user: User = { id: found.id, email: found.email, name: found.name, role: found.role };
-        set({ user, role: found.role });
+      login: async (email, password) => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+        if (error || !data.user) return false;
+        const { data: row, error: rowErr } = await supabase
+          .from('app_users')
+          .select('id, name, role, email')
+          .eq('auth_user_id', data.user.id)
+          .single();
+        if (rowErr || !row) {
+          await supabase.auth.signOut();
+          return false;
+        }
+        set({
+          user: {
+            id: row.id as string,
+            email: row.email as string,
+            name: row.name as string,
+            role: row.role as UserRole,
+          },
+          role: row.role as UserRole,
+        });
         return true;
       },
-      logout: () => set({ user: null, role: null }),
+      logout: async () => {
+        await supabase.auth.signOut();
+        set({ user: null, role: null });
+      },
       setHasHydrated: (value) => set({ _hasHydrated: value }),
     }),
     {

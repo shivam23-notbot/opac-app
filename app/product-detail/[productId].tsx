@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, Pressable } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Plus, Package, Truck, Clock } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
@@ -8,6 +8,8 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { SectionLabel } from '@/components/SectionLabel';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useDispatchStore } from '@/store/dispatchStore';
+import { useAuthStore } from '@/store/authStore';
+import { useUsersStore } from '@/store/usersStore';
 import { RAW_MATERIALS } from '@/mocks/rawMaterials';
 import { COLORS, FONTS } from '@/constants';
 
@@ -97,6 +99,14 @@ export default function ProductDetailScreen() {
   const insets = useSafeAreaInsets();
   const product = useInventoryStore((s) => s.getProduct(productId));
   const getDispatchesByProduct = useDispatchStore((s) => s.getDispatchesByProduct);
+  const role = useAuthStore((s) => s.role);
+  const hasHydrated = useAuthStore((s) => s._hasHydrated);
+  const displayNameFor = useUsersStore((s) => s.displayNameFor);
+
+  if (!hasHydrated) return null;
+  if (role !== 'worker' && role !== 'admin') {
+    return <Redirect href="/(auth)/login" />;
+  }
 
   if (!product) {
     return (
@@ -138,7 +148,7 @@ export default function ProductDetailScreen() {
             : `Adjusted ${delta} bags`,
       sub: `${h.openingBags} → ${h.closingBags} bags${h.notes ? ` · ${h.notes}` : ''}`,
       meta: h.materialsUsed && h.materialsUsed.length ? h.materialsUsed : null,
-      by: h.recordedBy ?? '—',
+      by: h.recordedBy ? displayNameFor(h.recordedBy) : '—',
       color: delta > 0 ? COLORS.accent : delta < 0 ? COLORS.warning : COLORS.textSecondary,
     });
   });
@@ -149,7 +159,7 @@ export default function ProductDetailScreen() {
       sortKey: `${d.date}T${d.time ?? ''}`,
       title: `Dispatched ${d.bags} bags`,
       sub: `${d.recipient}${d.vehicleNumber ? ` · ${d.vehicleNumber}` : ''}${d.time ? ` · ${d.time}` : ''}`,
-      by: d.recordedBy ?? '—',
+      by: d.recordedBy ? displayNameFor(d.recordedBy) : '—',
       color: polymerColor(product.polymer),
     });
   });

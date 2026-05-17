@@ -2,12 +2,26 @@
 
 Internal operations app for OPAC Polymers — track worker attendance, production stock, and dispatch.
 
-## Login Credentials
+## First-time setup
 
-| Role   | Email             | Password |
-|--------|-------------------|----------|
-| Worker | worker@opac.in    | 1234     |
-| Admin  | admin@opac.in     | 1234     |
+The app does **not** seed any users automatically. Authentication runs through Supabase Auth — every login requires an `auth.users` row plus a linked `app_users` row.
+
+To bootstrap the first admin:
+
+1. **Supabase Dashboard → Authentication → Users → Add user** (manually). Set an email + password and tick "Auto-confirm email".
+2. Copy the resulting `auth.users.id` (a UUID).
+3. In the SQL editor:
+   ```sql
+   insert into app_users (id, email, name, role, auth_user_id)
+   values (gen_random_uuid()::text,
+           'you@example.com',
+           'Your Name',
+           'admin',
+           '<the auth.users id from step 1>');
+   ```
+4. Log in to the app with the email + password you set.
+
+After that, additional users (admins or workers) can be created from the **Admin → Users** screen — the app calls a Supabase Edge Function (`manage-users`) under the hood, which is the only path allowed to mint new auth users.
 
 > Admin dashboard (sidebar layout) is **web-only**. On mobile, admin login redirects to the worker dashboard.
 
@@ -52,7 +66,7 @@ npx expo start --ios
 npx expo start --web
 # or press 'w' after starting
 ```
-Then open `http://localhost:8081` in your browser and log in with `admin@opac.in / 1234`.
+Then open `http://localhost:8081` in your browser and log in with the admin account you bootstrapped (see **First-time setup** above).
 
 ---
 
@@ -85,7 +99,6 @@ mocks/
   employees.ts           # 8 workers
   products.ts            # 3 products with seeded 14-day history
   rawMaterials.ts        # 5 raw materials
-  users.ts               # 2 test accounts
 
 components/
   PrimaryButton, SecondaryButton, PillButton

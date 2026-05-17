@@ -8,7 +8,7 @@ import {
   Platform,
   TextInput,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Redirect } from 'expo-router';
 import { X, ArrowUp, ArrowDown, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PolymerBadge } from '@/components/PolymerBadge';
@@ -31,14 +31,21 @@ export default function StockUpdateScreen() {
   const getProduct = useInventoryStore((s) => s.getProduct);
   const updateStock = useInventoryStore((s) => s.updateStock);
   const user = useAuthStore((s) => s.user);
+  const role = useAuthStore((s) => s.role);
+  const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const logAudit = useAuditStore((s) => s.log);
   const showToast = useUiStore((s) => s.showToast);
-
-  const product = getProduct(productId);
 
   const [closingBags, setClosingBags] = useState('');
   const [notes, setNotes] = useState('');
   const [materialsKg, setMaterialsKg] = useState<Record<string, string>>({});
+
+  if (!hasHydrated) return null;
+  if (role !== 'worker' && role !== 'admin') {
+    return <Redirect href="/(auth)/login" />;
+  }
+
+  const product = getProduct(productId);
 
   if (!product) {
     return (

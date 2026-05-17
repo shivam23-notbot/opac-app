@@ -66,7 +66,7 @@ export const useAttendanceStore = create<AttendanceState>()(
             id: generateId(),
             date,
             employee_id: employeeId,
-            status: JSON.stringify(status),
+            status,
             recorded_at: recordedAt,
           },
           { onConflict: 'date,employee_id' }

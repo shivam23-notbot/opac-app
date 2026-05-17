@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useAttendanceStore } from '@/store/attendanceStore';
 import { useWorkersStore } from '@/store/workersStore';
 import { useAuthStore } from '@/store/authStore';
+import { useUsersStore } from '@/store/usersStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { todayISO, formatDateReadable } from '@/lib/date';
@@ -57,6 +58,7 @@ export default function AttendanceScreen() {
   const allAdvances = useWorkersStore((s) => s.advances);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
+  const displayNameFor = useUsersStore((s) => s.displayNameFor);
   const logAudit = useAuditStore((s) => s.log);
   const showToast = useUiStore((s) => s.showToast);
 
@@ -571,7 +573,7 @@ export default function AttendanceScreen() {
                     marginTop: 8,
                   }}
                 >
-                  By {rec.recordedBy === user?.id ? 'you' : rec.recordedBy} ·{' '}
+                  By {rec.recordedBy === user?.id ? 'you' : displayNameFor(rec.recordedBy)} ·{' '}
                   {new Date(rec.recordedAt).toLocaleTimeString('en-IN', {
                     hour: '2-digit',
                     minute: '2-digit',

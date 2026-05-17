@@ -27,9 +27,26 @@ All `npm` start scripts wrap Expo CLI with `NODE_OPTIONS=--no-experimental-requi
 
 Install with `npm install --legacy-peer-deps` (Expo 54 + RN 0.81 peer-dep mismatches).
 
-Demo credentials (seeded into `usersStore` on first launch): `worker@opac.in / 1234`, `admin@opac.in / 1234`. They are no longer displayed on the login screen.
+Demo credentials currently exist in the project's Supabase Auth and are linked to `app_users` rows: `admin@opac.in / admin123`, `manager@opac.in / manager123`, `supervisor@opac.in / worker123`, `operator@opac.in / worker123`. These are **not** seeded by the app — they were created by the security migration. Treat the passwords as throwaway; rotate before any non-dev usage. For fresh Supabase projects, follow the bootstrap recipe in `README.md`.
 
 ## Architecture
+
+### Backend (Supabase)
+`lib/supabase.ts` exports a single `supabase` client (anon/publishable key — safe to embed for internal apps with RLS disabled). All stores import it for remote sync.
+
+**Tables** (must exist in Supabase before the app can sync):
+`app_users`, `workers`, `advances`, `attendance`, `products`, `stock_history`, `dispatch_entries`, `audit_logs`
+
+RLS is enabled on every table. Identity comes from Supabase Auth JWTs (`auth.uid()`), and identity columns (`recorded_by`, `user_id`) have `default auth.uid()::text` plus a WITH CHECK clause that pins them to the caller. Roles are determined by `app_users.role` joined via `public.is_admin(auth.uid())`. **Never re-introduce client-supplied `recorded_by` arguments** — leave the column out of the insert payload entirely and let the DB default fill it in. The local Zustand mirror may temporarily hold a different value optimistically; the next `hydrate()` reconciles it.
+
+Auth flow: `useAuthStore.login(email, password)` calls `supabase.auth.signInWithPassword`, then looks up the matching `app_users` row by `auth_user_id`. There is **no client-side credential comparison** and **no `password` column** on `app_users` — Supabase Auth owns credentials. User CRUD that touches `auth.users` (create / delete / password reset) goes through the `manage-users` Edge Function with `verify_jwt: true` and a service-role-backed admin check.
+
+**Sync pattern** used in every store:
+1. `hydrate()` — called once at startup from `app/_layout.tsx` via `Promise.all`. Fetches all rows from Supabase, rebuilds local Zustand state. No automatic seeding — fresh installs bootstrap via the SQL recipe in `README.md`.
+2. **Optimistic mutations** — every write (`addUser`, `mark`, `record`, etc.) updates local Zustand state immediately (no spinner), then fires a Supabase insert/update/delete in the background. On Supabase error, the local state is rolled back.
+3. AsyncStorage `persist` middleware is still present as a local cache — so the last known state is available instantly on next launch before `hydrate()` completes. The users list (`usersStore`) is **not persisted** — it lives in memory only after `hydrate()`.
+
+If Supabase tables don't exist yet, `hydrate()` fails silently (`.catch(() => {})`) and the app falls back to AsyncStorage-only state (isolated per platform, no cross-device sync).
 
 ### Routing (Expo Router v6)
 File-based routing with three route groups:
@@ -42,8 +59,8 @@ File-based routing with three route groups:
 
 Several admin screens are thin re-exports of the worker version (e.g. `app/(admin)/dispatch.tsx` is `export { default } from '@/app/(worker)/dispatch'`). Behavior diverges via the `role` from `useAuthStore` (e.g. delete buttons only render for admins; the worker-deletion icon on `(worker)/attendance.tsx` is admin-only).
 
-### State (Zustand v5 + AsyncStorage persist)
-All stores are in `store/`. Each uses `persist` middleware with a unique storage key (`opac-*`):
+### State (Zustand v5 + AsyncStorage persist + Supabase)
+All stores are in `store/`. Each uses `persist` middleware with a unique storage key (`opac-*`) for the local cache layer, and imports `supabase` from `lib/supabase.ts` for remote sync:
 
 | Store | Key data | Notable methods |
 |---|---|---|

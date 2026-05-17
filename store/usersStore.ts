@@ -2,14 +2,11 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { UserRole } from '@/types';
-import { USERS as SEED_USERS } from '@/mocks/users';
-import { generateId } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
 export interface AppUser {
   id: string;
   email: string;
-  password: string;
   name: string;
   role: UserRole;
 }
@@ -18,24 +15,25 @@ interface UsersState {
   users: AppUser[];
   _synced: boolean;
   hydrate: () => Promise<void>;
-  addUser: (data: { email: string; password: string; name: string; role: UserRole }) => Promise<{
-    ok: boolean;
-    error?: string;
-    id?: string;
-  }>;
+  addUser: (data: {
+    email: string;
+    password: string;
+    name: string;
+    role: UserRole;
+  }) => Promise<{ ok: boolean; error?: string; id?: string }>;
   updateUser: (
     id: string,
-    patch: Partial<Pick<AppUser, 'email' | 'password' | 'name' | 'role'>>
+    patch: Partial<Pick<AppUser, 'email' | 'name' | 'role'>>
   ) => Promise<{ ok: boolean; error?: string }>;
   removeUser: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  findByCredentials: (email: string, password: string) => AppUser | undefined;
+  sendPasswordReset: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  displayNameFor: (id: string) => string;
 }
 
 function rowToUser(row: Record<string, unknown>): AppUser {
   return {
     id: row.id as string,
     email: row.email as string,
-    password: row.password as string,
     name: row.name as string,
     role: row.role as UserRole,
   };
@@ -48,23 +46,11 @@ export const useUsersStore = create<UsersState>()(
       _synced: false,
 
       hydrate: async () => {
-        const { data, error } = await supabase.from('app_users').select('*');
+        const { data, error } = await supabase
+          .from('app_users')
+          .select('id, email, name, role');
         if (error || !data) return;
-        if (data.length === 0) {
-          // Seed on first run
-          await supabase.from('app_users').insert(
-            SEED_USERS.map((u) => ({
-              id: u.id,
-              email: u.email,
-              password: u.password,
-              name: u.name,
-              role: u.role,
-            }))
-          );
-          set({ users: SEED_USERS.map((u) => ({ ...u })), _synced: true });
-        } else {
-          set({ users: data.map(rowToUser), _synced: true });
-        }
+        set({ users: data.map(rowToUser), _synced: true });
       },
 
       addUser: async ({ email, password, name, role }) => {
@@ -73,22 +59,16 @@ export const useUsersStore = create<UsersState>()(
           return { ok: false, error: 'All fields are required' };
         if (get().users.some((u) => u.email === trimmedEmail))
           return { ok: false, error: 'A user with this email already exists' };
-        const id = generateId();
-        const newUser: AppUser = { id, email: trimmedEmail, password, name: name.trim(), role };
-        // Optimistic
-        set((s) => ({ users: [...s.users, newUser] }));
-        const { error } = await supabase.from('app_users').insert({
-          id,
-          email: trimmedEmail,
-          password,
-          name: name.trim(),
-          role,
+
+        const { data, error } = await supabase.functions.invoke('manage-users', {
+          body: { action: 'create', email: trimmedEmail, password, name: name.trim(), role },
         });
-        if (error) {
-          set((s) => ({ users: s.users.filter((u) => u.id !== id) }));
-          return { ok: false, error: error.message };
+        if (error || !data?.ok) {
+          return { ok: false, error: error?.message ?? data?.error ?? 'Could not add user' };
         }
-        return { ok: true, id };
+        const created = rowToUser(data.user);
+        set((s) => ({ users: [...s.users, created] }));
+        return { ok: true, id: created.id };
       },
 
       updateUser: async (id, patch) => {
@@ -107,17 +87,14 @@ export const useUsersStore = create<UsersState>()(
         const updated: AppUser = {
           ...target,
           email: nextEmail,
-          password: patch.password ?? target.password,
           name: patch.name !== undefined ? patch.name.trim() : target.name,
           role: patch.role ?? target.role,
         };
-        // Optimistic
         set((s) => ({ users: s.users.map((u) => (u.id === id ? updated : u)) }));
         const { error } = await supabase
           .from('app_users')
           .update({
             email: updated.email,
-            password: updated.password,
             name: updated.name,
             role: updated.role,
           })
@@ -137,24 +114,36 @@ export const useUsersStore = create<UsersState>()(
           const adminCount = users.filter((u) => u.role === 'admin').length;
           if (adminCount <= 1) return { ok: false, error: 'Cannot delete the last admin' };
         }
-        // Optimistic
         set((s) => ({ users: s.users.filter((u) => u.id !== id) }));
-        const { error } = await supabase.from('app_users').delete().eq('id', id);
-        if (error) {
+        const { data, error } = await supabase.functions.invoke('manage-users', {
+          body: { action: 'delete', id },
+        });
+        if (error || !data?.ok) {
           set((s) => ({ users: [...s.users, target] }));
-          return { ok: false, error: error.message };
+          return { ok: false, error: error?.message ?? 'Could not remove user' };
         }
         return { ok: true };
       },
 
-      findByCredentials: (email, password) => {
-        const e = email.trim().toLowerCase();
-        return get().users.find((u) => u.email === e && u.password === password);
+      sendPasswordReset: async (id) => {
+        const { data, error } = await supabase.functions.invoke('manage-users', {
+          body: { action: 'reset_password', id },
+        });
+        if (error || !data?.ok) {
+          return { ok: false, error: error?.message ?? 'Could not send reset email' };
+        }
+        return { ok: true };
+      },
+
+      displayNameFor: (id) => {
+        const user = get().users.find((u) => u.id === id);
+        return user ? user.name : id;
       },
     }),
     {
       name: 'opac-users-store',
       storage: createJSONStorage(() => AsyncStorage),
+      partialize: () => ({}),
     }
   )
 );

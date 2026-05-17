@@ -10,7 +10,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { COLORS, FONTS } from '@/constants';
-import { Plus, Pencil, Trash2, Shield, User as UserIcon, Eye, EyeOff } from 'lucide-react-native';
+import { Plus, Pencil, Trash2, Shield, User as UserIcon, Eye, EyeOff, KeyRound } from 'lucide-react-native';
 import type { UserRole } from '@/types';
 
 export default function UsersScreen() {
@@ -19,6 +19,7 @@ export default function UsersScreen() {
   const addUser = useUsersStore((s) => s.addUser);
   const updateUser = useUsersStore((s) => s.updateUser);
   const removeUser = useUsersStore((s) => s.removeUser);
+  const sendPasswordReset = useUsersStore((s) => s.sendPasswordReset);
   const authUser = useAuthStore((s) => s.user);
   const logAudit = useAuditStore((s) => s.log);
   const showToast = useUiStore((s) => s.showToast);
@@ -47,7 +48,7 @@ export default function UsersScreen() {
     setEditing(u);
     setName(u.name);
     setEmail(u.email);
-    setPassword(u.password);
+    setPassword('');
     setRole(u.role);
     setShowPassword(false);
     setShowSheet(true);
@@ -55,7 +56,7 @@ export default function UsersScreen() {
 
   const handleSave = async () => {
     if (editing) {
-      const result = await updateUser(editing.id, { name, email, password, role });
+      const result = await updateUser(editing.id, { name, email, role });
       if (!result.ok) {
         showToast('error', result.error ?? 'Could not update user');
         return;
@@ -86,6 +87,24 @@ export default function UsersScreen() {
       showToast('success', 'User added');
     }
     setShowSheet(false);
+  };
+
+  const handleSendReset = async () => {
+    if (!editing) return;
+    const result = await sendPasswordReset(editing.id);
+    if (!result.ok) {
+      showToast('error', result.error ?? 'Could not send reset email');
+      return;
+    }
+    logAudit({
+      userId: authUser!.id,
+      userName: authUser!.name,
+      action: 'reset_password',
+      entity: 'worker',
+      entityId: editing.id,
+      detail: `Sent password reset email to ${editing.email}`,
+    });
+    showToast('success', `Reset email sent to ${editing.email}`);
   };
 
   const handleDelete = async (u: AppUser) => {
@@ -303,34 +322,87 @@ export default function UsersScreen() {
           placeholder="user@opac.in"
           keyboardType="email-address"
         />
-        <View style={{ marginBottom: 4 }}>
-          <TextField
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="••••••"
-            secureTextEntry={!showPassword}
-          />
-          <Pressable
-            onPress={() => setShowPassword((v) => !v)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -6 }}
-          >
-            {showPassword ? (
-              <EyeOff size={13} color={COLORS.textTertiary} />
-            ) : (
-              <Eye size={13} color={COLORS.textTertiary} />
-            )}
+        {editing ? (
+          <View style={{ marginBottom: 4 }}>
+            <Text
+              style={{
+                fontFamily: FONTS.sansBold,
+                fontSize: 11,
+                letterSpacing: 1,
+                textTransform: 'uppercase',
+                color: COLORS.textSecondary,
+                marginBottom: 8,
+              }}
+            >
+              Password
+            </Text>
+            <Pressable
+              onPress={handleSendReset}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                paddingVertical: 12,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: COLORS.borderColor,
+                backgroundColor: COLORS.bgTertiary,
+              }}
+            >
+              <KeyRound size={14} color={COLORS.textSecondary} />
+              <Text
+                style={{
+                  color: COLORS.textPrimary,
+                  fontFamily: FONTS.sansSemibold,
+                  fontSize: 13,
+                }}
+              >
+                Send password reset email
+              </Text>
+            </Pressable>
             <Text
               style={{
                 color: COLORS.textTertiary,
-                fontFamily: FONTS.sansSemibold,
-                fontSize: 12,
+                fontFamily: FONTS.sansMedium,
+                fontSize: 11,
+                marginTop: 6,
               }}
             >
-              {showPassword ? 'Hide password' : 'Show password'}
+              Passwords are managed by Supabase Auth. Admins can trigger a reset
+              email; the user picks their new password from the link.
             </Text>
-          </Pressable>
-        </View>
+          </View>
+        ) : (
+          <View style={{ marginBottom: 4 }}>
+            <TextField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••"
+              secureTextEntry={!showPassword}
+            />
+            <Pressable
+              onPress={() => setShowPassword((v) => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -6 }}
+            >
+              {showPassword ? (
+                <EyeOff size={13} color={COLORS.textTertiary} />
+              ) : (
+                <Eye size={13} color={COLORS.textTertiary} />
+              )}
+              <Text
+                style={{
+                  color: COLORS.textTertiary,
+                  fontFamily: FONTS.sansSemibold,
+                  fontSize: 12,
+                }}
+              >
+                {showPassword ? 'Hide password' : 'Show password'}
+              </Text>
+            </Pressable>
+          </View>
+        )}
 
         <Text
           style={{
