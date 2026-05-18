@@ -23,6 +23,7 @@ import {
   X,
   DollarSign,
   WifiOff,
+  Pencil,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS } from '@/constants';
@@ -63,6 +64,8 @@ export default function AttendanceScreen() {
   const addWorker = useWorkersStore((s) => s.addWorker);
   const removeWorker = useWorkersStore((s) => s.removeWorker);
   const addAdvance = useWorkersStore((s) => s.addAdvance);
+  const editAdvance = useWorkersStore((s) => s.editAdvance);
+  const deleteAdvance = useWorkersStore((s) => s.deleteAdvance);
   const allAdvances = useWorkersStore((s) => s.advances);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
@@ -86,6 +89,8 @@ export default function AttendanceScreen() {
   const [advAmt, setAdvAmt] = useState('');
   const [advDate, setAdvDate] = useState(todayISO());
   const [advNote, setAdvNote] = useState('');
+  const [editAdvanceId, setEditAdvanceId] = useState<string | null>(null);
+  const [deleteAdvanceTarget, setDeleteAdvanceTarget] = useState<{ id: string; workerName: string; amount: number } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
 
   const records = getRecordsForDate(selectedDate);
@@ -226,31 +231,65 @@ export default function AttendanceScreen() {
     showToast('success', 'Worker removed');
   };
 
-  const handleAddAdvance = () => {
+  const closeAdvanceSheet = () => {
+    setShowAdvance(false);
+    setEditAdvanceId(null);
+    setAdvAmt('');
+    setAdvDate(todayISO());
+    setAdvNote('');
+  };
+
+  const handleSaveAdvance = () => {
     const amt = parseFloat(advAmt);
     if (isNaN(amt) || amt <= 0) {
       showToast('error', 'Enter a valid amount');
       return;
     }
-    addAdvance(
-      { workerId: advanceWorkerId, amount: amt, date: advDate, note: advNote || undefined },
-      user!.id
-    );
+    if (editAdvanceId) {
+      editAdvance(editAdvanceId, { amount: amt, date: advDate, note: advNote || undefined });
+      logAudit({
+        userId: user!.id,
+        userName: user!.name,
+        action: 'edit_advance',
+        entity: 'advance',
+        entityId: editAdvanceId,
+        detail: `Updated to ₹${amt} on ${advDate}`,
+      });
+      closeAdvanceSheet();
+      showToast('success', 'Advance updated');
+    } else {
+      addAdvance(
+        { workerId: advanceWorkerId, amount: amt, date: advDate, note: advNote || undefined },
+        user!.id
+      );
+      logAudit({
+        userId: user!.id,
+        userName: user!.name,
+        action: 'add_advance',
+        entity: 'advance',
+        entityId: advanceWorkerId,
+        detail: `₹${amt} on ${advDate}`,
+      });
+      const recordedFor = advDate;
+      closeAdvanceSheet();
+      setSelectedDate(recordedFor);
+      showToast('success', `Advance recorded on ${recordedFor}`);
+    }
+  };
+
+  const handleDeleteAdvance = () => {
+    if (!deleteAdvanceTarget) return;
+    deleteAdvance(deleteAdvanceTarget.id);
     logAudit({
       userId: user!.id,
       userName: user!.name,
-      action: 'add_advance',
+      action: 'delete_advance',
       entity: 'advance',
-      entityId: advanceWorkerId,
-      detail: `₹${amt} on ${advDate}`,
+      entityId: deleteAdvanceTarget.id,
+      detail: `Deleted ₹${deleteAdvanceTarget.amount} advance for ${deleteAdvanceTarget.workerName}`,
     });
-    const recordedFor = advDate;
-    setAdvAmt('');
-    setAdvDate(todayISO());
-    setAdvNote('');
-    setShowAdvance(false);
-    setSelectedDate(recordedFor);
-    showToast('success', `Advance recorded on ${recordedFor}`);
+    setDeleteAdvanceTarget(null);
+    showToast('success', 'Advance deleted');
   };
 
   return (
@@ -757,8 +796,9 @@ export default function AttendanceScreen() {
                       key={a.id}
                       style={{
                         flexDirection: 'row',
-                        justifyContent: 'space-between',
-                        paddingVertical: 2,
+                        alignItems: 'center',
+                        paddingVertical: 3,
+                        gap: 6,
                       }}
                     >
                       <Text
@@ -767,7 +807,6 @@ export default function AttendanceScreen() {
                           fontSize: 11,
                           color: COLORS.textSecondary,
                           flex: 1,
-                          marginRight: 8,
                         }}
                         numberOfLines={1}
                       >
@@ -782,6 +821,28 @@ export default function AttendanceScreen() {
                       >
                         ₹{a.amount}
                       </Text>
+                      <Pressable
+                        hitSlop={8}
+                        onPress={() => {
+                          setEditAdvanceId(a.id);
+                          setAdvAmt(String(a.amount));
+                          setAdvDate(a.date);
+                          setAdvNote(a.note ?? '');
+                          setShowAdvance(true);
+                        }}
+                        style={{ padding: 2 }}
+                      >
+                        <Pencil size={12} color={COLORS.textTertiary} />
+                      </Pressable>
+                      <Pressable
+                        hitSlop={8}
+                        onPress={() =>
+                          setDeleteAdvanceTarget({ id: a.id, workerName: worker.name, amount: a.amount })
+                        }
+                        style={{ padding: 2 }}
+                      >
+                        <Trash2 size={12} color={COLORS.error} />
+                      </Pressable>
                     </View>
                   ))}
                 </View>
@@ -856,6 +917,20 @@ export default function AttendanceScreen() {
       </BottomSheet>
 
       <ConfirmDialog
+        open={deleteAdvanceTarget !== null}
+        title="Delete advance?"
+        message={
+          deleteAdvanceTarget
+            ? `Delete ₹${deleteAdvanceTarget.amount} advance for ${deleteAdvanceTarget.workerName}? This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        destructive
+        onCancel={() => setDeleteAdvanceTarget(null)}
+        onConfirm={handleDeleteAdvance}
+      />
+
+      <ConfirmDialog
         open={removeTarget !== null}
         title="Remove worker?"
         message={
@@ -872,7 +947,11 @@ export default function AttendanceScreen() {
         }}
       />
 
-      <BottomSheet open={showAdvance} onClose={() => setShowAdvance(false)} title="Record Advance">
+      <BottomSheet
+        open={showAdvance}
+        onClose={closeAdvanceSheet}
+        title={editAdvanceId ? 'Edit Advance' : 'Record Advance'}
+      >
         <TextField
           label="Amount (₹)"
           value={advAmt}
@@ -880,11 +959,11 @@ export default function AttendanceScreen() {
           keyboardType="numeric"
           placeholder="500"
         />
-        <TextField
+        <InlineDatePicker
           label="Date"
           value={advDate}
-          onChangeText={setAdvDate}
-          placeholder="YYYY-MM-DD"
+          onChange={setAdvDate}
+          maxDate={todayISO()}
         />
         <TextField
           label="Note (optional)"
@@ -893,7 +972,11 @@ export default function AttendanceScreen() {
           placeholder="e.g. festival advance"
         />
         <View style={{ marginTop: 8 }}>
-          <PrimaryButton label="Record Advance" onPress={handleAddAdvance} size="lg" />
+          <PrimaryButton
+            label={editAdvanceId ? 'Save Changes' : 'Record Advance'}
+            onPress={handleSaveAdvance}
+            size="lg"
+          />
         </View>
       </BottomSheet>
     </View>

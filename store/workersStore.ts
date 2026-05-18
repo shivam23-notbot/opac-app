@@ -23,6 +23,8 @@ interface WorkersState {
     data: { workerId: string; amount: number; date: string; note?: string },
     userId: string
   ) => void;
+  editAdvance: (id: string, data: { amount: number; date: string; note?: string }) => void;
+  deleteAdvance: (id: string) => void;
   getActiveWorkers: () => Worker[];
   getWorkersForDate: (date: string) => Worker[];
   getWorkerAdvances: (workerId: string) => AdvancePayment[];
@@ -131,6 +133,24 @@ export const useWorkersStore = create<WorkersState>()(
           date,
           note,
         }).then(() => {});
+      },
+
+      editAdvance: (id, { amount, date, note }) => {
+        set((s) => ({
+          advances: s.advances.map((a) =>
+            a.id === id ? { ...a, amount, date, note: note ?? undefined } : a
+          ),
+        }));
+        supabase
+          .from('advances')
+          .update({ amount, date, note: note ?? null })
+          .eq('id', id)
+          .then(() => {});
+      },
+
+      deleteAdvance: (id) => {
+        set((s) => ({ advances: s.advances.filter((a) => a.id !== id) }));
+        supabase.from('advances').delete().eq('id', id).then(() => {});
       },
 
       getActiveWorkers: () => get().workers.filter((w) => w.active),

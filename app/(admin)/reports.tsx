@@ -8,6 +8,8 @@ import {
   computeMonthlySalary,
   computeCarryInBreakdown,
   daysOfMonth,
+  earningsFor,
+  statusLabel,
 } from '@/lib/salary';
 import { generateWorkerMonthlyPDF } from '@/lib/salaryPdf';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +23,7 @@ import { useUsersStore } from '@/store/usersStore';
 import { useUiStore } from '@/store/uiStore';
 import { bagsToKg } from '@/lib/units';
 import { subtractDays, todayISO } from '@/lib/date';
-import type { AttendanceStatus, Worker } from '@/types';
+import type { Worker } from '@/types';
 import { COLORS, FONTS } from '@/constants';
 import {
   Lock,
@@ -103,25 +105,6 @@ function TableHeader({ cols }: { cols: string[] }) {
       ))}
     </View>
   );
-}
-
-function statusDisplayLabel(status: AttendanceStatus, night?: boolean): string {
-  if (status === 'absent') return 'Absent';
-  if (status === 'night') return 'Night';
-  if (status === 'full') return night ? 'Full + Night' : 'Full';
-  if (typeof status === 'object' && 'hours' in status) return night ? `${status.hours}h + Night` : `${status.hours}h`;
-  return String(status);
-}
-
-function computeEarnings(status: AttendanceStatus, dailyWage: number, night?: boolean): number {
-  if (status === 'absent') return 0;
-  const nightBonus = night ? dailyWage : 0;
-  if (status === 'full') return dailyWage + nightBonus;
-  if (status === 'night') return dailyWage;
-  if (typeof status === 'object' && 'hours' in status) {
-    return (1 / 12) * status.hours * dailyWage + nightBonus;
-  }
-  return 0;
 }
 
 
@@ -1927,7 +1910,8 @@ export default function ReportsScreen() {
                   {detailAttendance.map((e, i) => {
                     const status = e.rec!.status;
                     const night = e.rec!.night ?? false;
-                    const label = statusDisplayLabel(status, night);
+                    const overtime = e.rec!.overtimeHours;
+                    const label = statusLabel(status, night, overtime);
                     const color =
                       status === 'absent'
                         ? COLORS.error
@@ -1935,7 +1919,7 @@ export default function ReportsScreen() {
                           ? COLORS.accent
                           : COLORS.warning;
                     const earned = detailWorker
-                      ? computeEarnings(status, detailWorker.dailyWage, night)
+                      ? earningsFor(status, detailWorker.dailyWage, night, overtime)
                       : 0;
                     return (
                       <View
@@ -2190,6 +2174,3 @@ export default function ReportsScreen() {
     </ScrollView>
   );
 }
-
-// Unused helper kept for potential future use
-void statusDisplayLabel;
