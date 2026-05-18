@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, Platform, Animated } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, Platform, Animated, ActivityIndicator } from 'react-native';
 import { TopBar } from '@/components/TopBar';
 import { TextField } from '@/components/TextField';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -22,6 +22,7 @@ import {
   Trash2,
   X,
   DollarSign,
+  WifiOff,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS } from '@/constants';
@@ -32,11 +33,12 @@ function offsetDate(base: string, days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function statusLabel(status: AttendanceStatus | undefined, night?: boolean): string {
+function statusLabel(status: AttendanceStatus | undefined, night?: boolean, overtimeHours?: number): string {
   if (!status) return night ? 'Night' : '';
   if (status === 'absent') return 'Absent';
   if (status === 'night') return 'Night';
-  if (status === 'full') return night ? 'Full Day + Night' : 'Full Day';
+  const otPart = overtimeHours ? ` +${overtimeHours}h OT` : '';
+  if (status === 'full') return night ? `Full Day${otPart} + Night` : `Full Day${otPart}`;
   if (typeof status === 'object') return night ? `${status.hours}h + Night` : `${status.hours}h`;
   return '';
 }
@@ -54,6 +56,8 @@ export default function AttendanceScreen() {
   const toggleNight = useAttendanceStore((s) => s.toggleNight);
   const getRecordsForDate = useAttendanceStore((s) => s.getRecordsForDate);
   const canEdit = useAttendanceStore((s) => s.canEdit);
+  const getSyncStatus = useAttendanceStore((s) => s.getSyncStatus);
+  const syncStatus = useAttendanceStore((s) => s.syncStatus);
   const getActiveWorkers = useWorkersStore((s) => s.getActiveWorkers);
   const getWorkersForDate = useWorkersStore((s) => s.getWorkersForDate);
   const addWorker = useWorkersStore((s) => s.addWorker);
@@ -68,6 +72,8 @@ export default function AttendanceScreen() {
 
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [hoursInput, setHoursInput] = useState<Record<string, string>>({});
+  // Track whether the hours input is for overtime (present already selected) vs partial hours
+  const [hoursIsOvertime, setHoursIsOvertime] = useState<Record<string, boolean>>({});
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [showAdvance, setShowAdvance] = useState(false);
   const [advanceWorkerId, setAdvanceWorkerId] = useState('');
@@ -104,22 +110,22 @@ export default function AttendanceScreen() {
     outputRange: ['0%', '100%'],
   });
 
-  const handleMark = (workerId: string, status: AttendanceStatus) => {
+  const handleMark = (workerId: string, status: AttendanceStatus, overtimeHours?: number) => {
     if (!editable) {
       showToast('error', 'Cannot edit entries older than 3 days');
       return;
     }
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    mark(selectedDate, workerId, status, user!.id, user!.name);
+    mark(selectedDate, workerId, status, user!.id, user!.name, overtimeHours);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
-    const currentNight = status === 'absent' ? false : (records[workerId]?.night ?? false);
+    const currentNightAfter = status === 'absent' ? false : (records[workerId]?.night ?? false);
     logAudit({
       userId: user!.id,
       userName: user!.name,
       action: 'mark_attendance',
       entity: 'attendance',
       entityId: `${selectedDate}:${workerId}`,
-      detail: `${workerName}: ${statusLabel(status, currentNight)} on ${selectedDate}`,
+      detail: `${workerName}: ${statusLabel(status, currentNightAfter, overtimeHours)} on ${selectedDate}`,
     });
   };
 
@@ -149,7 +155,8 @@ export default function AttendanceScreen() {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     toggleNight(selectedDate, workerId, user!.id, user!.name);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
-    const wasNight = records[workerId]?.night ?? false;
+    const rec = records[workerId];
+    const wasNight = (rec?.night ?? false) || rec?.status === 'night';
     logAudit({
       userId: user!.id,
       userName: user!.name,
@@ -166,12 +173,16 @@ export default function AttendanceScreen() {
       showToast('error', 'Enter valid hours (1-24)');
       return;
     }
-    handleMark(workerId, { hours: h });
-    setHoursInput((prev) => {
-      const n = { ...prev };
-      delete n[workerId];
-      return n;
-    });
+    const isOvertime = hoursIsOvertime[workerId] ?? false;
+    if (isOvertime) {
+      // Overtime on top of full day
+      handleMark(workerId, 'full', h);
+    } else {
+      // Partial hours (replaces full day)
+      handleMark(workerId, { hours: h });
+    }
+    setHoursInput((prev) => { const n = { ...prev }; delete n[workerId]; return n; });
+    setHoursIsOvertime((prev) => { const n = { ...prev }; delete n[workerId]; return n; });
   };
 
   const handleAddWorker = () => {
@@ -377,12 +388,18 @@ export default function AttendanceScreen() {
         {workers.map((worker) => {
           const rec = records[worker.id];
           const currentStatus = rec?.status;
-          const currentNight = rec?.night ?? false;
+          const currentNight = (rec?.night ?? false) || currentStatus === 'night';
+          const isNightOnly = currentStatus === 'night';
+          // hasDayShift: true only for full or hours-based (not night-only or absent)
           const isHoursMode = typeof currentStatus === 'object';
-          const hoursOpen = hoursInput[worker.id] !== undefined;
-          const isAbsent = currentStatus === 'absent';
-          // Day shift is active when status is 'full' or hours-based (not absent, not night-only)
           const hasDayShift = currentStatus === 'full' || isHoursMode;
+          const isAbsent = currentStatus === 'absent';
+          const hoursOpen = hoursInput[worker.id] !== undefined;
+          const isOvertime = hoursIsOvertime[worker.id] ?? false;
+          const currentOvertime = rec?.overtimeHours;
+
+          const workerSyncStatus = getSyncStatus(selectedDate, worker.id);
+
           const dayAdvances = allAdvances.filter(
             (a) => a.workerId === worker.id && a.date === selectedDate
           );
@@ -436,6 +453,14 @@ export default function AttendanceScreen() {
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {/* Sync status indicator */}
+                  {rec && workerSyncStatus === 'syncing' && (
+                    <ActivityIndicator size="small" color={COLORS.textTertiary} />
+                  )}
+                  {rec && workerSyncStatus === 'error' && (
+                    <WifiOff size={13} color={COLORS.error} />
+                  )}
+
                   {(currentStatus || currentNight) && (
                     <View
                       style={{
@@ -454,7 +479,7 @@ export default function AttendanceScreen() {
                           textTransform: 'uppercase',
                         }}
                       >
-                        {statusLabel(currentStatus, currentNight)}
+                        {statusLabel(currentStatus, currentNight, currentOvertime)}
                       </Text>
                     </View>
                   )}
@@ -495,15 +520,19 @@ export default function AttendanceScreen() {
                     { key: 'hours', label: 'Hours', color: COLORS.warning },
                   ] as const
                 ).map((btn) => {
+                  // Night selected: night boolean OR night-only status
+                  // Present selected: full day (not hours-only, not absent, not night-only)
+                  // Hours selected: hours-based status OR hours input open
+                  // Absent selected: absent status
                   const selected =
                     btn.key === 'present'
-                      ? hasDayShift
+                      ? hasDayShift && !isHoursMode
                       : btn.key === 'night'
                         ? currentNight
                         : btn.key === 'absent'
                           ? isAbsent
                           : isHoursMode || hoursOpen;
-                  const disabled = false;
+
                   return (
                     <Pressable
                       key={btn.key}
@@ -513,37 +542,57 @@ export default function AttendanceScreen() {
                           return;
                         }
                         if (btn.key === 'present') {
-                          if (hasDayShift) {
-                            // Toggle present OFF: keep night-only if night is active, else unmark
+                          if (hasDayShift && !isHoursMode) {
+                            // Toggle present OFF
                             if (currentNight) {
+                              // Keep night-only
                               handleMark(worker.id, 'night');
                             } else {
                               handleUnmark(worker.id);
                             }
+                          } else if (isHoursMode) {
+                            // Switch from hours to full day, keep overtime if any
+                            handleMark(worker.id, 'full');
                           } else {
-                            // Toggle present ON: clears absent if set, preserves night
+                            // Toggle present ON (clears absent, night-only stays as day+night)
                             handleMark(worker.id, 'full');
                           }
                           setHoursInput((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
+                          setHoursIsOvertime((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
                         } else if (btn.key === 'night') {
                           handleToggleNight(worker.id);
                         } else if (btn.key === 'absent') {
                           if (isAbsent) {
-                            // Toggle absent OFF — unmark completely
                             handleUnmark(worker.id);
                           } else {
-                            // Mark absent: clears present/night/hours
                             handleMark(worker.id, 'absent');
                             setHoursInput((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
+                            setHoursIsOvertime((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
                           }
                         } else {
-                          // Hours: open input (clears absent if set by switching to hours mode on save)
-                          setHoursInput((prev) => ({
-                            ...prev,
-                            [worker.id]: isHoursMode
-                              ? String((currentStatus as { hours: number }).hours)
-                              : (prev[worker.id] ?? ''),
-                          }));
+                          // Hours button
+                          if (hasDayShift && !isHoursMode) {
+                            // Present is active → open overtime input
+                            setHoursIsOvertime((prev) => ({ ...prev, [worker.id]: true }));
+                            setHoursInput((prev) => ({
+                              ...prev,
+                              [worker.id]: currentOvertime ? String(currentOvertime) : '',
+                            }));
+                          } else if (isHoursMode) {
+                            // Already in hours mode → edit existing hours
+                            setHoursIsOvertime((prev) => ({ ...prev, [worker.id]: false }));
+                            setHoursInput((prev) => ({
+                              ...prev,
+                              [worker.id]: String((currentStatus as { hours: number }).hours),
+                            }));
+                          } else {
+                            // No day shift → open partial hours input
+                            setHoursIsOvertime((prev) => ({ ...prev, [worker.id]: false }));
+                            setHoursInput((prev) => ({
+                              ...prev,
+                              [worker.id]: prev[worker.id] ?? '',
+                            }));
+                          }
                         }
                       }}
                       style={{
@@ -554,7 +603,6 @@ export default function AttendanceScreen() {
                         borderWidth: 1,
                         borderColor: selected ? btn.color : COLORS.borderColor,
                         backgroundColor: selected ? btn.color + '14' : COLORS.bgSecondary,
-                        opacity: disabled ? 0.35 : 1,
                       }}
                     >
                       <Text
@@ -576,56 +624,70 @@ export default function AttendanceScreen() {
               {hoursOpen && (
                 <View
                   style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 8,
                     marginTop: 10,
                   }}
                 >
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      backgroundColor: COLORS.bgTertiary,
-                      borderRadius: 10,
-                      borderWidth: 1,
-                      borderColor: COLORS.borderColor,
-                      color: COLORS.textPrimary,
-                      paddingHorizontal: 12,
-                      paddingVertical: 9,
+                  {isOvertime && (
+                    <Text style={{
                       fontFamily: FONTS.sansMedium,
-                      fontSize: 14,
-                    }}
-                    placeholder="Hours worked (e.g. 6)"
-                    placeholderTextColor={COLORS.textTertiary}
-                    keyboardType="numeric"
-                    value={hoursInput[worker.id]}
-                    onChangeText={(v) => setHoursInput((prev) => ({ ...prev, [worker.id]: v }))}
-                  />
-                  <Pressable
-                    onPress={() => handleHoursSubmit(worker.id)}
-                    style={{
-                      backgroundColor: COLORS.accent,
-                      borderRadius: 10,
-                      paddingHorizontal: 16,
-                      paddingVertical: 10,
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontFamily: FONTS.sansBold, fontSize: 13 }}>
-                      Save
+                      fontSize: 11,
+                      color: COLORS.textTertiary,
+                      marginBottom: 6,
+                    }}>
+                      Overtime hours (on top of full day)
                     </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() =>
-                      setHoursInput((prev) => {
-                        const n = { ...prev };
-                        delete n[worker.id];
-                        return n;
-                      })
-                    }
-                    hitSlop={10}
-                  >
-                    <X size={18} color={COLORS.textTertiary} />
-                  </Pressable>
+                  )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TextInput
+                      style={{
+                        flex: 1,
+                        backgroundColor: COLORS.bgTertiary,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: COLORS.borderColor,
+                        color: COLORS.textPrimary,
+                        paddingHorizontal: 12,
+                        paddingVertical: 9,
+                        fontFamily: FONTS.sansMedium,
+                        fontSize: 14,
+                      }}
+                      placeholder={isOvertime ? 'Overtime hours (e.g. 2)' : 'Hours worked (e.g. 6)'}
+                      placeholderTextColor={COLORS.textTertiary}
+                      keyboardType="numeric"
+                      value={hoursInput[worker.id]}
+                      onChangeText={(v) => setHoursInput((prev) => ({ ...prev, [worker.id]: v }))}
+                    />
+                    <Pressable
+                      onPress={() => handleHoursSubmit(worker.id)}
+                      style={{
+                        backgroundColor: COLORS.accent,
+                        borderRadius: 10,
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontFamily: FONTS.sansBold, fontSize: 13 }}>
+                        Save
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setHoursInput((prev) => {
+                          const n = { ...prev };
+                          delete n[worker.id];
+                          return n;
+                        });
+                        setHoursIsOvertime((prev) => {
+                          const n = { ...prev };
+                          delete n[worker.id];
+                          return n;
+                        });
+                      }}
+                      hitSlop={10}
+                    >
+                      <X size={18} color={COLORS.textTertiary} />
+                    </Pressable>
+                  </View>
                 </View>
               )}
 
@@ -643,6 +705,9 @@ export default function AttendanceScreen() {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
+                  {workerSyncStatus === 'error' && (
+                    <Text style={{ color: COLORS.error }}>{' '}· Upload failed — tap to retry</Text>
+                  )}
                 </Text>
               )}
 

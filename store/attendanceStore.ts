@@ -6,8 +6,12 @@ import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
 
+// Sync state per record key "date:employeeId"
+export type SyncStatus = 'synced' | 'syncing' | 'error';
+
 interface AttendanceState {
   records: Record<string, Record<string, AttendanceRecord>>;
+  syncStatus: Record<string, SyncStatus>;
   _hasHydrated: boolean;
   setHasHydrated: (value: boolean) => void;
   hydrate: () => Promise<void>;
@@ -16,7 +20,8 @@ interface AttendanceState {
     employeeId: string,
     status: AttendanceStatus,
     userId: string,
-    userName: string
+    userName: string,
+    overtimeHours?: number
   ) => void;
   unmark: (date: string, employeeId: string) => void;
   toggleNight: (
@@ -28,12 +33,43 @@ interface AttendanceState {
   getRecordsForDate: (date: string) => Record<string, AttendanceRecord>;
   getTodayRecords: () => Record<string, AttendanceRecord>;
   canEdit: (date: string, isAdmin: boolean) => boolean;
+  getSyncStatus: (date: string, employeeId: string) => SyncStatus;
+}
+
+function syncKey(date: string, employeeId: string) {
+  return `${date}:${employeeId}`;
+}
+
+async function upsertRecord(
+  date: string,
+  employeeId: string,
+  status: AttendanceStatus,
+  night: boolean,
+  userName: string,
+  recordedAt: string,
+  overtimeHours?: number
+) {
+  const { error } = await supabase.from('attendance').upsert(
+    {
+      id: generateId(),
+      date,
+      employee_id: employeeId,
+      status,
+      night,
+      overtime_hours: overtimeHours ?? null,
+      recorded_by_name: userName,
+      recorded_at: recordedAt,
+    },
+    { onConflict: 'date,employee_id' }
+  );
+  return error;
 }
 
 export const useAttendanceStore = create<AttendanceState>()(
   persist(
     (set, get) => ({
       records: {},
+      syncStatus: {},
       _hasHydrated: false,
       setHasHydrated: (value) => set({ _hasHydrated: value }),
 
@@ -49,96 +85,119 @@ export const useAttendanceStore = create<AttendanceState>()(
             employeeId: empId,
             status: row.status as AttendanceStatus,
             night: (row.night as boolean) ?? false,
+            overtimeHours: row.overtime_hours != null ? Number(row.overtime_hours) : undefined,
             recordedBy: row.recorded_by as string,
             recordedByName: row.recorded_by_name as string | undefined,
             recordedAt: row.recorded_at as string,
           };
         }
-        set({ records, _hasHydrated: true });
+        set({ records, _hasHydrated: true, syncStatus: {} });
       },
 
-      mark: (date, employeeId, status, userId, userName) => {
+      mark: (date, employeeId, status, userId, userName, overtimeHours) => {
         const recordedAt = new Date().toISOString();
-        // When marking absent, clear night too. Otherwise preserve existing night.
+        const key = syncKey(date, employeeId);
+        // When marking absent, clear night and overtime. Otherwise preserve existing night.
         const existingNight = status === 'absent' ? false : (get().records[date]?.[employeeId]?.night ?? false);
+        const effectiveOvertime = status === 'absent' ? undefined : overtimeHours;
+
         set((state) => ({
           records: {
             ...state.records,
             [date]: {
               ...(state.records[date] ?? {}),
-              [employeeId]: { employeeId, status, night: existingNight, recordedBy: userId, recordedByName: userName, recordedAt },
+              [employeeId]: {
+                employeeId,
+                status,
+                night: existingNight,
+                overtimeHours: effectiveOvertime,
+                recordedBy: userId,
+                recordedByName: userName,
+                recordedAt,
+              },
             },
           },
+          syncStatus: { ...state.syncStatus, [key]: 'syncing' },
         }));
-        // recorded_by is filled by the DB default (auth.uid()::text).
-        supabase.from('attendance').upsert(
-          {
-            id: generateId(),
-            date,
-            employee_id: employeeId,
-            status,
-            night: existingNight,
-            recorded_by_name: userName,
-            recorded_at: recordedAt,
-          },
-          { onConflict: 'date,employee_id' }
-        ).then(() => {});
+
+        upsertRecord(date, employeeId, status, existingNight, userName, recordedAt, effectiveOvertime)
+          .then((error) => {
+            set((state) => ({
+              syncStatus: { ...state.syncStatus, [key]: error ? 'error' : 'synced' },
+            }));
+          });
       },
 
       unmark: (date, employeeId) => {
+        const key = syncKey(date, employeeId);
         set((state) => {
           const dateRecords = { ...(state.records[date] ?? {}) };
           delete dateRecords[employeeId];
-          return { records: { ...state.records, [date]: dateRecords } };
+          const newSync = { ...state.syncStatus };
+          delete newSync[key];
+          return { records: { ...state.records, [date]: dateRecords }, syncStatus: newSync };
         });
         supabase.from('attendance').delete().match({ date, employee_id: employeeId }).then(() => {});
       },
 
       toggleNight: (date, employeeId, userId, userName) => {
         const recordedAt = new Date().toISOString();
+        const key = syncKey(date, employeeId);
         const existing = get().records[date]?.[employeeId];
-        const wasNight = existing?.night ?? false;
+        // Night is "on" if the night boolean is true OR if status === 'night' (night-only encoding)
+        const wasNight = (existing?.night ?? false) || existing?.status === 'night';
         const newNight = !wasNight;
+
         // Preserve the day status (full / hours), but not 'absent' or 'night'.
-        // If turning night OFF with no day status, remove the record entirely.
         const rawStatus = existing?.status;
         const dayStatus: AttendanceStatus | undefined =
           rawStatus && rawStatus !== 'night' && rawStatus !== 'absent' ? rawStatus : undefined;
+        const existingOvertime = existing?.overtimeHours;
 
         if (!newNight && !dayStatus) {
           // Night turned off and no day shift — unmark completely
           set((state) => {
             const dateRecords = { ...(state.records[date] ?? {}) };
             delete dateRecords[employeeId];
-            return { records: { ...state.records, [date]: dateRecords } };
+            const newSync = { ...state.syncStatus };
+            delete newSync[key];
+            return { records: { ...state.records, [date]: dateRecords }, syncStatus: newSync };
           });
           supabase.from('attendance').delete().match({ date, employee_id: employeeId }).then(() => {});
           return;
         }
 
-        // night-only: status='night'; day+night: preserve dayStatus with night=true
+        // Night-only: status='night', night=false (the boolean is redundant for night-only)
+        // Day+night: dayStatus with night=true
         const newStatus: AttendanceStatus = dayStatus ?? 'night';
+        // For night-only, night boolean is false (status carries the info). For day+night, night=true.
+        const nightBool = dayStatus !== undefined ? newNight : false;
+
         set((state) => ({
           records: {
             ...state.records,
             [date]: {
               ...(state.records[date] ?? {}),
-              [employeeId]: { employeeId, status: newStatus, night: newNight, recordedBy: userId, recordedByName: userName, recordedAt },
+              [employeeId]: {
+                employeeId,
+                status: newStatus,
+                night: nightBool,
+                overtimeHours: existingOvertime,
+                recordedBy: userId,
+                recordedByName: userName,
+                recordedAt,
+              },
             },
           },
+          syncStatus: { ...state.syncStatus, [key]: 'syncing' },
         }));
-        supabase.from('attendance').upsert(
-          {
-            id: generateId(),
-            date,
-            employee_id: employeeId,
-            status: newStatus,
-            night: newNight,
-            recorded_by_name: userName,
-            recorded_at: recordedAt,
-          },
-          { onConflict: 'date,employee_id' }
-        ).then(() => {});
+
+        upsertRecord(date, employeeId, newStatus, nightBool, userName, recordedAt, existingOvertime)
+          .then((error) => {
+            set((state) => ({
+              syncStatus: { ...state.syncStatus, [key]: error ? 'error' : 'synced' },
+            }));
+          });
       },
 
       getRecordsForDate: (date) => get().records[date] ?? {},
@@ -149,6 +208,9 @@ export const useAttendanceStore = create<AttendanceState>()(
         const target = new Date(date + 'T00:00:00');
         const diffDays = Math.floor((today.getTime() - target.getTime()) / 86400000);
         return diffDays <= 3;
+      },
+      getSyncStatus: (date, employeeId) => {
+        return get().syncStatus[syncKey(date, employeeId)] ?? 'synced';
       },
     }),
     {

@@ -63,18 +63,25 @@ export function daysOfMonth(monthKey: string): string[] {
   return out;
 }
 
-export function statusLabel(status: AttendanceStatus | null, night?: boolean): string {
+export function statusLabel(status: AttendanceStatus | null, night?: boolean, overtimeHours?: number): string {
   if (status === null) return '—';
   if (status === 'absent') return 'Absent';
   if (status === 'night') return 'Night';
-  if (status === 'full') return night ? 'Full Day + Night' : 'Full Day';
+  const otPart = overtimeHours ? ` +${overtimeHours}h OT` : '';
+  if (status === 'full') return night ? `Full Day${otPart} + Night` : `Full Day${otPart}`;
   return night ? `${status.hours}h + Night` : `${status.hours}h`;
 }
 
-export function earningsFor(status: AttendanceStatus | null, dailyWage: number, night?: boolean): number {
+export function earningsFor(
+  status: AttendanceStatus | null,
+  dailyWage: number,
+  night?: boolean,
+  overtimeHours?: number
+): number {
   if (status === null || status === 'absent') return 0;
   const nightBonus = night ? dailyWage : 0;
-  if (status === 'full') return dailyWage + nightBonus;
+  const overtimeBonus = overtimeHours ? (overtimeHours / 12) * dailyWage : 0;
+  if (status === 'full') return dailyWage + nightBonus + overtimeBonus;
   if (status === 'night') return dailyWage;
   return (status.hours / 12) * dailyWage + nightBonus;
 }
@@ -82,12 +89,14 @@ export function earningsFor(status: AttendanceStatus | null, dailyWage: number, 
 export function earningsCalcString(
   status: AttendanceStatus | null,
   dailyWage: number,
-  night?: boolean
+  night?: boolean,
+  overtimeHours?: number
 ): string {
   if (status === null) return '—';
   if (status === 'absent') return '0';
   const nightPart = night ? ` + 1 × ₹${dailyWage}` : '';
-  if (status === 'full') return `1 × ₹${dailyWage}${nightPart}`;
+  const otPart = overtimeHours ? ` + (${overtimeHours}/12) × ₹${dailyWage}` : '';
+  if (status === 'full') return `1 × ₹${dailyWage}${otPart}${nightPart}`;
   if (status === 'night') return `1 × ₹${dailyWage} (night)`;
   return `(${status.hours}/12) × ₹${dailyWage}${nightPart}`;
 }
@@ -108,7 +117,7 @@ function buildSingleMonth(
     const dayRec = records[date];
     const rec = dayRec?.[worker.id];
     if (!rec) return;
-    gross += earningsFor(rec.status, worker.dailyWage, rec.night);
+    gross += earningsFor(rec.status, worker.dailyWage, rec.night, rec.overtimeHours);
   });
   const totalAdvances = allAdvances
     .filter((a) => a.workerId === worker.id && monthKeyFromISO(a.date) === monthKey)
@@ -212,7 +221,8 @@ export function computeMonthlySalary(
     const rec = records[date]?.[worker.id];
     const status = rec?.status ?? null;
     const night = rec?.night ?? false;
-    const earned = earningsFor(status, worker.dailyWage, night);
+    const overtimeHours = rec?.overtimeHours;
+    const earned = earningsFor(status, worker.dailyWage, night, overtimeHours);
     grossEarned += earned;
     if (status === 'full') presentDays++;
     else if (status === 'absent') absentDays++;
@@ -222,8 +232,8 @@ export function computeMonthlySalary(
       date,
       weekday: weekdayShort(date),
       status,
-      statusLabel: statusLabel(status, night),
-      calc: earningsCalcString(status, worker.dailyWage, night),
+      statusLabel: statusLabel(status, night, overtimeHours),
+      calc: earningsCalcString(status, worker.dailyWage, night, overtimeHours),
       earned,
     };
   });

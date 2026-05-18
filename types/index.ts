@@ -35,6 +35,7 @@ export interface AttendanceRecord {
   employeeId: string;
   status: AttendanceStatus;
   night: boolean;
+  overtimeHours?: number;
   recordedBy: string;
   recordedByName?: string;
   recordedAt: string;
