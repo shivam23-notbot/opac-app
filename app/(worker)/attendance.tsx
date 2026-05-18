@@ -50,6 +50,7 @@ function statusColor(status: AttendanceStatus | undefined): string {
 
 export default function AttendanceScreen() {
   const mark = useAttendanceStore((s) => s.mark);
+  const unmark = useAttendanceStore((s) => s.unmark);
   const toggleNight = useAttendanceStore((s) => s.toggleNight);
   const getRecordsForDate = useAttendanceStore((s) => s.getRecordsForDate);
   const canEdit = useAttendanceStore((s) => s.canEdit);
@@ -111,7 +112,7 @@ export default function AttendanceScreen() {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     mark(selectedDate, workerId, status, user!.id, user!.name);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
-    const currentNight = records[workerId]?.night ?? false;
+    const currentNight = status === 'absent' ? false : (records[workerId]?.night ?? false);
     logAudit({
       userId: user!.id,
       userName: user!.name,
@@ -119,6 +120,24 @@ export default function AttendanceScreen() {
       entity: 'attendance',
       entityId: `${selectedDate}:${workerId}`,
       detail: `${workerName}: ${statusLabel(status, currentNight)} on ${selectedDate}`,
+    });
+  };
+
+  const handleUnmark = (workerId: string) => {
+    if (!editable) {
+      showToast('error', 'Cannot edit entries older than 3 days');
+      return;
+    }
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    unmark(selectedDate, workerId);
+    const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
+    logAudit({
+      userId: user!.id,
+      userName: user!.name,
+      action: 'mark_attendance',
+      entity: 'attendance',
+      entityId: `${selectedDate}:${workerId}`,
+      detail: `${workerName}: unmarked on ${selectedDate}`,
     });
   };
 
@@ -362,6 +381,8 @@ export default function AttendanceScreen() {
           const isHoursMode = typeof currentStatus === 'object';
           const hoursOpen = hoursInput[worker.id] !== undefined;
           const isAbsent = currentStatus === 'absent';
+          // Day shift is active when status is 'full' or hours-based (not absent, not night-only)
+          const hasDayShift = currentStatus === 'full' || isHoursMode;
           const dayAdvances = allAdvances.filter(
             (a) => a.workerId === worker.id && a.date === selectedDate
           );
@@ -476,13 +497,13 @@ export default function AttendanceScreen() {
                 ).map((btn) => {
                   const selected =
                     btn.key === 'present'
-                      ? currentStatus === 'full'
+                      ? hasDayShift
                       : btn.key === 'night'
                         ? currentNight
                         : btn.key === 'absent'
-                          ? currentStatus === 'absent'
+                          ? isAbsent
                           : isHoursMode || hoursOpen;
-                  const disabled = btn.key !== 'absent' && isAbsent;
+                  const disabled = false;
                   return (
                     <Pressable
                       key={btn.key}
@@ -491,24 +512,32 @@ export default function AttendanceScreen() {
                           showToast('error', 'Cannot edit entries older than 3 days');
                           return;
                         }
-                        if (disabled) return;
                         if (btn.key === 'present') {
-                          handleMark(worker.id, 'full');
-                          setHoursInput((prev) => {
-                            const n = { ...prev };
-                            delete n[worker.id];
-                            return n;
-                          });
+                          if (hasDayShift) {
+                            // Toggle present OFF: keep night-only if night is active, else unmark
+                            if (currentNight) {
+                              handleMark(worker.id, 'night');
+                            } else {
+                              handleUnmark(worker.id);
+                            }
+                          } else {
+                            // Toggle present ON: clears absent if set, preserves night
+                            handleMark(worker.id, 'full');
+                          }
+                          setHoursInput((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
                         } else if (btn.key === 'night') {
                           handleToggleNight(worker.id);
                         } else if (btn.key === 'absent') {
-                          handleMark(worker.id, 'absent');
-                          setHoursInput((prev) => {
-                            const n = { ...prev };
-                            delete n[worker.id];
-                            return n;
-                          });
+                          if (isAbsent) {
+                            // Toggle absent OFF — unmark completely
+                            handleUnmark(worker.id);
+                          } else {
+                            // Mark absent: clears present/night/hours
+                            handleMark(worker.id, 'absent');
+                            setHoursInput((prev) => { const n = { ...prev }; delete n[worker.id]; return n; });
+                          }
                         } else {
+                          // Hours: open input (clears absent if set by switching to hours mode on save)
                           setHoursInput((prev) => ({
                             ...prev,
                             [worker.id]: isHoursMode

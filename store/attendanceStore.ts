@@ -18,6 +18,7 @@ interface AttendanceState {
     userId: string,
     userName: string
   ) => void;
+  unmark: (date: string, employeeId: string) => void;
   toggleNight: (
     date: string,
     employeeId: string,
@@ -58,8 +59,8 @@ export const useAttendanceStore = create<AttendanceState>()(
 
       mark: (date, employeeId, status, userId, userName) => {
         const recordedAt = new Date().toISOString();
-        const existingNight = get().records[date]?.[employeeId]?.night ?? false;
-        // Optimistic
+        // When marking absent, clear night too. Otherwise preserve existing night.
+        const existingNight = status === 'absent' ? false : (get().records[date]?.[employeeId]?.night ?? false);
         set((state) => ({
           records: {
             ...state.records,
@@ -84,21 +85,45 @@ export const useAttendanceStore = create<AttendanceState>()(
         ).then(() => {});
       },
 
+      unmark: (date, employeeId) => {
+        set((state) => {
+          const dateRecords = { ...(state.records[date] ?? {}) };
+          delete dateRecords[employeeId];
+          return { records: { ...state.records, [date]: dateRecords } };
+        });
+        supabase.from('attendance').delete().match({ date, employee_id: employeeId }).then(() => {});
+      },
+
       toggleNight: (date, employeeId, userId, userName) => {
         const recordedAt = new Date().toISOString();
         const existing = get().records[date]?.[employeeId];
         const wasNight = existing?.night ?? false;
         const newNight = !wasNight;
-        // If no day status yet (or only night was set), use 'night' as the status marker
-        const currentStatus: AttendanceStatus = (existing?.status && existing.status !== 'night')
-          ? existing.status
-          : 'night';
+        // Preserve the day status (full / hours), but not 'absent' or 'night'.
+        // If turning night OFF with no day status, remove the record entirely.
+        const rawStatus = existing?.status;
+        const dayStatus: AttendanceStatus | undefined =
+          rawStatus && rawStatus !== 'night' && rawStatus !== 'absent' ? rawStatus : undefined;
+
+        if (!newNight && !dayStatus) {
+          // Night turned off and no day shift — unmark completely
+          set((state) => {
+            const dateRecords = { ...(state.records[date] ?? {}) };
+            delete dateRecords[employeeId];
+            return { records: { ...state.records, [date]: dateRecords } };
+          });
+          supabase.from('attendance').delete().match({ date, employee_id: employeeId }).then(() => {});
+          return;
+        }
+
+        // night-only: status='night'; day+night: preserve dayStatus with night=true
+        const newStatus: AttendanceStatus = dayStatus ?? 'night';
         set((state) => ({
           records: {
             ...state.records,
             [date]: {
               ...(state.records[date] ?? {}),
-              [employeeId]: { employeeId, status: currentStatus, night: newNight, recordedBy: userId, recordedByName: userName, recordedAt },
+              [employeeId]: { employeeId, status: newStatus, night: newNight, recordedBy: userId, recordedByName: userName, recordedAt },
             },
           },
         }));
@@ -107,7 +132,7 @@ export const useAttendanceStore = create<AttendanceState>()(
             id: generateId(),
             date,
             employee_id: employeeId,
-            status: currentStatus,
+            status: newStatus,
             night: newNight,
             recorded_by_name: userName,
             recorded_at: recordedAt,
