@@ -5,6 +5,7 @@ import { TextField } from '@/components/TextField';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { DatePickerModal } from '@/components/DatePickerModal';
 import { useAttendanceStore } from '@/store/attendanceStore';
 import { useWorkersStore } from '@/store/workersStore';
 import { useAuthStore } from '@/store/authStore';
@@ -71,6 +72,8 @@ export default function AttendanceScreen() {
   const [newName, setNewName] = useState('');
   const [newWage, setNewWage] = useState('');
   const [newBalance, setNewBalance] = useState('');
+  const [newJoinDate, setNewJoinDate] = useState(todayISO());
+  const [showJoinDatePicker, setShowJoinDatePicker] = useState(false);
 
   const [advAmt, setAdvAmt] = useState('');
   const [advDate, setAdvDate] = useState(todayISO());
@@ -141,7 +144,7 @@ export default function AttendanceScreen() {
       showToast('error', 'Enter a valid daily wage');
       return;
     }
-    addWorker({ name: newName.trim(), dailyWage: wage, previousBalance: balance }, user!.id);
+    addWorker({ name: newName.trim(), dailyWage: wage, previousBalance: balance, createdAt: newJoinDate }, user!.id);
     logAudit({
       userId: user!.id,
       userName: user!.name,
@@ -153,6 +156,7 @@ export default function AttendanceScreen() {
     setNewName('');
     setNewWage('');
     setNewBalance('');
+    setNewJoinDate(todayISO());
     setShowAddWorker(false);
     showToast('success', 'Worker added');
   };
@@ -684,7 +688,14 @@ export default function AttendanceScreen() {
         <Plus size={24} color="#fff" />
       </Pressable>
 
-      <BottomSheet open={showAddWorker} onClose={() => setShowAddWorker(false)} title="Add Worker">
+      <BottomSheet
+        open={showAddWorker}
+        onClose={() => {
+          setShowAddWorker(false);
+          setNewJoinDate(todayISO());
+        }}
+        title="Add Worker"
+      >
         <TextField
           label="Worker Name"
           value={newName}
@@ -705,10 +716,56 @@ export default function AttendanceScreen() {
           keyboardType="numeric"
           placeholder="0"
         />
+
+        <View style={{ marginBottom: 16 }}>
+          <Text
+            style={{
+              fontFamily: FONTS.sansBold,
+              fontSize: 11,
+              letterSpacing: 1,
+              textTransform: 'uppercase',
+              color: COLORS.textSecondary,
+              marginBottom: 6,
+            }}
+          >
+            Join Date
+          </Text>
+          <Pressable
+            onPress={() => setShowJoinDatePicker(true)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: COLORS.borderColor,
+              backgroundColor: COLORS.bgTertiary,
+            }}
+          >
+            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 14, color: COLORS.textPrimary }}>
+              {newJoinDate}
+            </Text>
+            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textTertiary }}>
+              tap to change
+            </Text>
+          </Pressable>
+        </View>
+
         <View style={{ marginTop: 8 }}>
           <PrimaryButton label="Add Worker" onPress={handleAddWorker} size="lg" />
         </View>
       </BottomSheet>
+
+      <DatePickerModal
+        visible={showJoinDatePicker}
+        value={newJoinDate}
+        label="Join Date"
+        maxDate={todayISO()}
+        onConfirm={(d) => setNewJoinDate(d)}
+        onClose={() => setShowJoinDatePicker(false)}
+      />
 
       <ConfirmDialog
         open={removeTarget !== null}

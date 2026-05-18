@@ -13,7 +13,7 @@ interface WorkersState {
   setHasHydrated: (value: boolean) => void;
   hydrate: () => Promise<void>;
   addWorker: (
-    data: { name: string; dailyWage: number; previousBalance: number },
+    data: { name: string; dailyWage: number; previousBalance: number; createdAt?: string },
     userId: string
   ) => Promise<string>;
   removeWorker: (id: string) => void;
@@ -74,9 +74,9 @@ export const useWorkersStore = create<WorkersState>()(
         });
       },
 
-      addWorker: async ({ name, dailyWage, previousBalance }, _userId) => {
+      addWorker: async ({ name, dailyWage, previousBalance, createdAt: rawDate }, _userId) => {
         const id = generateId();
-        const createdAt = todayISO();
+        const createdAt = (rawDate && rawDate <= todayISO()) ? rawDate : todayISO();
         const w: Worker = { id, name, dailyWage, previousBalance, active: true, createdAt };
         set((s) => ({ workers: [...s.workers, w] }));
         await supabase.from('workers').insert({
