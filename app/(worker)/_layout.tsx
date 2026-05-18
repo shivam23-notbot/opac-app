@@ -1,8 +1,9 @@
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { Tabs, Redirect, usePathname, useRouter } from 'expo-router';
 import { Home, Users, Package, Truck, LogOut } from 'lucide-react-native';
 import { useAuthStore } from '@/store/authStore';
 import { COLORS, FONTS } from '@/constants';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 function WorkerSidebar() {
   const pathname = usePathname();
@@ -131,13 +132,14 @@ function WorkerSidebar() {
 export default function WorkerLayout() {
   const role = useAuthStore((s) => s.role);
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
+  const isMobile = useIsMobile();
 
   if (!hasHydrated) return null;
   if (role !== 'worker' && role !== 'admin') {
     return <Redirect href="/(auth)/login" />;
   }
 
-  if (Platform.OS === 'web') {
+  if (!isMobile) {
     return (
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: COLORS.bgPrimary }}>
         <WorkerSidebar />
