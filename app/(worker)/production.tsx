@@ -6,7 +6,6 @@ import { TopBar } from '@/components/TopBar';
 import { Card } from '@/components/ui/Card';
 import { PolymerBadge } from '@/components/PolymerBadge';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { SectionLabel } from '@/components/SectionLabel';
 import { TextField } from '@/components/TextField';
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -15,9 +14,10 @@ import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { relativeTime, formatDateReadable, todayISO } from '@/lib/date';
+import { currentMonthKey, shiftMonthKey, monthLabel, daysOfMonth } from '@/lib/salary';
 import { generateId } from '@/lib/utils';
 import type { PolymerType, Product } from '@/types';
-import { Plus, ChevronRight, Package, Archive } from 'lucide-react-native';
+import { Plus, ChevronRight, ChevronLeft, Package, Archive, RefreshCw } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
 import { useEffect, useRef } from 'react';
 
@@ -116,17 +116,32 @@ function StatBox({
 
 function ProductCard({
   product,
+  monthKey,
   onTap,
   onUpdate,
   onRetire,
 }: {
   product: Product;
+  monthKey: string;
   onTap: () => void;
   onUpdate: () => void;
   onRetire?: () => void;
 }) {
   const today = todayISO();
-  const histEntry = product.stockHistory.find((e) => e.date === today);
+  const isCurrentMonth = monthKey === currentMonthKey();
+
+  // Monthly aggregates: sum all stock entries that fall within the month
+  const days = daysOfMonth(monthKey);
+  const monthStart = days[0];
+  const monthEnd = days[days.length - 1];
+  const monthEntries = product.stockHistory.filter(
+    (e) => e.date >= monthStart && e.date <= monthEnd
+  );
+  const monthProduced = monthEntries.reduce((s, e) => s + (e.closingBags - e.openingBags), 0);
+  const hasMonthEntries = monthEntries.length > 0;
+
+  // For current month: also show today's entry if available
+  const histEntry = isCurrentMonth ? product.stockHistory.find((e) => e.date === today) : null;
   const delta = histEntry ? histEntry.closingBags - histEntry.openingBags : null;
 
   return (
@@ -220,16 +235,33 @@ function ProductCard({
           </Text>
         </View>
 
-        {histEntry ? (
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-            <StatBox label="Opening" value={`${histEntry.openingBags}`} />
-            <StatBox label="Closing" value={`${histEntry.closingBags}`} />
-            <StatBox
-              label="Produced"
-              value={`${(delta ?? 0) >= 0 ? '+' : ''}${delta}`}
-              highlight={!!delta && delta > 0}
-              color={!delta ? COLORS.textSecondary : delta > 0 ? COLORS.accent : COLORS.error}
-            />
+        {hasMonthEntries ? (
+          <View style={{ marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+              <StatBox
+                label="Month Produced"
+                value={`${monthProduced >= 0 ? '+' : ''}${monthProduced}`}
+                highlight={monthProduced > 0}
+                color={monthProduced === 0 ? COLORS.textSecondary : monthProduced > 0 ? COLORS.accent : COLORS.error}
+              />
+              <StatBox
+                label="Entries"
+                value={`${monthEntries.length}`}
+                color={COLORS.textSecondary}
+              />
+            </View>
+            {isCurrentMonth && histEntry && (
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <StatBox label="Today Open" value={`${histEntry.openingBags}`} />
+                <StatBox label="Today Close" value={`${histEntry.closingBags}`} />
+                <StatBox
+                  label="Today +"
+                  value={`${(delta ?? 0) >= 0 ? '+' : ''}${delta}`}
+                  highlight={!!delta && delta > 0}
+                  color={!delta ? COLORS.textSecondary : delta > 0 ? COLORS.accent : COLORS.error}
+                />
+              </View>
+            )}
           </View>
         ) : (
           <View
@@ -248,7 +280,7 @@ function ProductCard({
                 color: COLORS.textTertiary,
               }}
             >
-              No entry for today yet
+              {isCurrentMonth ? 'No entry for today yet' : `No entries for ${monthLabel(monthKey)}`}
             </Text>
           </View>
         )}
@@ -480,6 +512,7 @@ export default function ProductionScreen() {
   const addProduct = useInventoryStore((s) => s.addProduct);
   const retireProduct = useInventoryStore((s) => s.retireProduct);
   const unretireProduct = useInventoryStore((s) => s.unretireProduct);
+  const hydrate = useInventoryStore((s) => s.hydrate);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
   const logAudit = useAuditStore((s) => s.log);
@@ -493,11 +526,25 @@ export default function ProductionScreen() {
   const [newEntryDate, setNewEntryDate] = useState(todayISO());
   const [retireTarget, setRetireTarget] = useState<Product | null>(null);
   const [unretireTarget, setUnretireTarget] = useState<Product | null>(null);
+  const [reportMonth, setReportMonth] = useState(currentMonthKey());
+  const [refreshing, setRefreshing] = useState(false);
 
   const today = todayISO();
   const active = products.filter((p) => p.active !== false);
   const retired = products.filter((p) => p.active === false);
   const totalStock = products.reduce((s, p) => s + p.currentBags, 0);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await hydrate();
+      showToast('success', 'Production data refreshed');
+    } catch {
+      showToast('error', 'Refresh failed');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleAddProduct = () => {
     if (!newDesc.trim()) {
@@ -553,6 +600,71 @@ export default function ProductionScreen() {
           />
         </View>
 
+        {/* Month stepper + refresh */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: COLORS.bgSecondary,
+            borderWidth: 1,
+            borderColor: COLORS.borderColor,
+            borderRadius: 12,
+            padding: 10,
+            marginBottom: 16,
+          }}
+        >
+          <Pressable
+            onPress={() => setReportMonth(shiftMonthKey(reportMonth, -1))}
+            hitSlop={10}
+            style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary }}
+          >
+            <ChevronLeft size={16} color={COLORS.textSecondary} />
+          </Pressable>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text
+              style={{
+                color: COLORS.textTertiary,
+                fontFamily: FONTS.sansBold,
+                fontSize: 10,
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+              }}
+            >
+              Report Month
+            </Text>
+            <Text
+              style={{
+                color: COLORS.textPrimary,
+                fontFamily: FONTS.sansExtraBold,
+                fontSize: 15,
+                marginTop: 2,
+              }}
+            >
+              {monthLabel(reportMonth)}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setReportMonth(shiftMonthKey(reportMonth, 1))}
+            hitSlop={10}
+            style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary, marginRight: 8 }}
+          >
+            <ChevronRight size={16} color={COLORS.textSecondary} />
+          </Pressable>
+          <Pressable
+            onPress={handleRefresh}
+            hitSlop={10}
+            style={{
+              padding: 8,
+              borderRadius: 8,
+              backgroundColor: refreshing ? COLORS.accentSoftBg : COLORS.bgTertiary,
+              borderWidth: 1,
+              borderColor: refreshing ? COLORS.accentSoftBorder : COLORS.borderColor,
+            }}
+          >
+            <RefreshCw size={16} color={refreshing ? COLORS.accent : COLORS.textSecondary} />
+          </Pressable>
+        </View>
+
         {active.length === 0 && retired.length === 0 && (
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
             <Package size={32} color={COLORS.textTertiary} />
@@ -583,6 +695,7 @@ export default function ProductionScreen() {
           <ProductCard
             key={p.id}
             product={p}
+            monthKey={reportMonth}
             onTap={() => router.push(`/product-detail/${p.id}`)}
             onUpdate={() => router.push(`/stock-update/${p.id}`)}
             onRetire={role === 'admin' ? () => setRetireTarget(p) : undefined}
