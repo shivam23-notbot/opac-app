@@ -141,8 +141,10 @@ function Sidebar() {
 
 export default function AdminLayout() {
   const role = useAuthStore((s) => s.role);
+  const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const isMobile = useIsMobile();
 
+  if (!hasHydrated) return null;
   if (role !== 'admin') {
     return <Redirect href="/(auth)/login" />;
   }

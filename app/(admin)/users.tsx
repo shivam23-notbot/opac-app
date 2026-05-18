@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, Pressable, Platform } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -10,11 +10,13 @@ import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { COLORS, FONTS } from '@/constants';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { Plus, Pencil, Trash2, Shield, User as UserIcon, Eye, EyeOff, KeyRound } from 'lucide-react-native';
 import type { UserRole } from '@/types';
 
 export default function UsersScreen() {
   const insets = useSafeAreaInsets();
+  const isMobile = useIsMobile();
   const users = useUsersStore((s) => s.users);
   const addUser = useUsersStore((s) => s.addUser);
   const updateUser = useUsersStore((s) => s.updateUser);
@@ -286,7 +288,7 @@ export default function UsersScreen() {
         onPress={openAdd}
         style={{
           position: 'absolute',
-          bottom: Platform.OS === 'web' ? 24 : 90,
+          bottom: isMobile ? 90 : 24,
           right: 20,
           width: 56,
           height: 56,

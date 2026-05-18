@@ -3,6 +3,12 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { User, UserRole } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { useWorkersStore } from './workersStore';
+import { useAttendanceStore } from './attendanceStore';
+import { useInventoryStore } from './inventoryStore';
+import { useDispatchStore } from './dispatchStore';
+import { useAuditStore } from './auditStore';
+import { useUsersStore } from './usersStore';
 
 interface AuthState {
   user: User | null;
@@ -43,6 +49,16 @@ export const useAuthStore = create<AuthState>()(
           },
           role: row.role as UserRole,
         });
+        // Re-hydrate all data stores so stale AsyncStorage cache is replaced with
+        // current Supabase data after every login.
+        Promise.all([
+          useUsersStore.getState().hydrate(),
+          useWorkersStore.getState().hydrate(),
+          useAttendanceStore.getState().hydrate(),
+          useInventoryStore.getState().hydrate(),
+          useDispatchStore.getState().hydrate(),
+          useAuditStore.getState().hydrate(),
+        ]).catch(() => {});
         return true;
       },
       logout: async () => {
