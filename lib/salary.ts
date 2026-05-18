@@ -3,7 +3,28 @@ import type {
   AttendanceStatus,
   AdvancePayment,
   Worker,
+  WageEntry,
 } from '@/types';
+
+// Returns the wage applicable on a given date by walking the worker's wage history.
+// Falls back to worker.dailyWage when no history is present (backwards compat).
+export function wageForDate(worker: Worker, dateISO: string): number {
+  const history = worker.wageHistory;
+  if (!history || history.length === 0) return worker.dailyWage;
+  let applicable: WageEntry | undefined;
+  for (const entry of history) {
+    if (entry.effectiveFrom <= dateISO) {
+      if (!applicable || entry.effectiveFrom > applicable.effectiveFrom) {
+        applicable = entry;
+      }
+    }
+  }
+  // date is before all history entries — use the earliest wage
+  if (!applicable) {
+    return [...history].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0].wage;
+  }
+  return applicable.wage;
+}
 
 export interface SalaryDayLine {
   date: string;
@@ -117,7 +138,8 @@ function buildSingleMonth(
     const dayRec = records[date];
     const rec = dayRec?.[worker.id];
     if (!rec) return;
-    gross += earningsFor(rec.status, worker.dailyWage, rec.night, rec.overtimeHours);
+    const wage = wageForDate(worker, date);
+    gross += earningsFor(rec.status, wage, rec.night, rec.overtimeHours);
   });
   const totalAdvances = allAdvances
     .filter((a) => a.workerId === worker.id && monthKeyFromISO(a.date) === monthKey)
@@ -222,7 +244,8 @@ export function computeMonthlySalary(
     const status = rec?.status ?? null;
     const night = rec?.night ?? false;
     const overtimeHours = rec?.overtimeHours;
-    const earned = earningsFor(status, worker.dailyWage, night, overtimeHours);
+    const wage = wageForDate(worker, date);
+    const earned = earningsFor(status, wage, night, overtimeHours);
     grossEarned += earned;
     if (status === 'full') presentDays++;
     else if (status === 'absent') absentDays++;
@@ -233,7 +256,7 @@ export function computeMonthlySalary(
       weekday: weekdayShort(date),
       status,
       statusLabel: statusLabel(status, night, overtimeHours),
-      calc: earningsCalcString(status, worker.dailyWage, night, overtimeHours),
+      calc: earningsCalcString(status, wage, night, overtimeHours),
       earned,
     };
   });

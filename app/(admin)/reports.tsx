@@ -10,6 +10,7 @@ import {
   daysOfMonth,
   earningsFor,
   statusLabel,
+  wageForDate,
 } from '@/lib/salary';
 import { generateWorkerMonthlyPDF } from '@/lib/salaryPdf';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1919,7 +1920,7 @@ export default function ReportsScreen() {
                           ? COLORS.accent
                           : COLORS.warning;
                     const earned = detailWorker
-                      ? earningsFor(status, detailWorker.dailyWage, night, overtime)
+                      ? earningsFor(status, wageForDate(detailWorker, e.date), night, overtime)
                       : 0;
                     return (
                       <View

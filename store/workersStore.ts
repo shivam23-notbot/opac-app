@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Worker, AdvancePayment } from '@/types';
+import type { Worker, AdvancePayment, WageEntry } from '@/types';
 import { generateId } from '@/lib/utils';
 import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
@@ -25,6 +25,7 @@ interface WorkersState {
   ) => void;
   editAdvance: (id: string, data: { amount: number; date: string; note?: string }) => void;
   deleteAdvance: (id: string) => void;
+  updateWorkerWage: (workerId: string, newWage: number, effectiveFrom: string) => void;
   getActiveWorkers: () => Worker[];
   getWorkersForDate: (date: string) => Worker[];
   getWorkerAdvances: (workerId: string) => AdvancePayment[];
@@ -32,10 +33,19 @@ interface WorkersState {
 }
 
 function rowToWorker(row: Record<string, unknown>): Worker {
+  const dailyWage = Number(row.daily_wage);
+  const createdDate = (row.created_at as string).slice(0, 10);
+  const rawHistory = row.wage_history as WageEntry[] | null | undefined;
+  // Migrate: existing workers without wage_history get a synthetic first entry
+  const wageHistory: WageEntry[] =
+    rawHistory && rawHistory.length > 0
+      ? rawHistory
+      : [{ wage: dailyWage, effectiveFrom: createdDate }];
   return {
     id: row.id as string,
     name: row.name as string,
-    dailyWage: Number(row.daily_wage),
+    dailyWage,
+    wageHistory,
     previousBalance: Number(row.previous_balance),
     active: row.active as boolean,
     settled: row.settled as boolean | undefined,
@@ -79,12 +89,14 @@ export const useWorkersStore = create<WorkersState>()(
       addWorker: async ({ name, dailyWage, previousBalance, createdAt: rawDate }, _userId) => {
         const id = generateId();
         const createdAt = (rawDate && rawDate <= todayISO()) ? rawDate : todayISO();
-        const w: Worker = { id, name, dailyWage, previousBalance, active: true, createdAt };
+        const wageHistory: WageEntry[] = [{ wage: dailyWage, effectiveFrom: createdAt.slice(0, 10) }];
+        const w: Worker = { id, name, dailyWage, wageHistory, previousBalance, active: true, createdAt };
         set((s) => ({ workers: [...s.workers, w] }));
         await supabase.from('workers').insert({
           id,
           name,
           daily_wage: dailyWage,
+          wage_history: wageHistory,
           previous_balance: previousBalance,
           active: true,
           settled: false,
@@ -133,6 +145,33 @@ export const useWorkersStore = create<WorkersState>()(
           date,
           note,
         }).then(() => {});
+      },
+
+      updateWorkerWage: (workerId, newWage, effectiveFrom) => {
+        const today = todayISO();
+        set((s) => ({
+          workers: s.workers.map((w) => {
+            if (w.id !== workerId) return w;
+            const existing = w.wageHistory ?? [{ wage: w.dailyWage, effectiveFrom: w.createdAt.slice(0, 10) }];
+            const newEntry: WageEntry = { wage: newWage, effectiveFrom };
+            const wageHistory = [...existing, newEntry]
+              .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+            // dailyWage = latest entry effective on or before today
+            let currentWage = wageHistory[0].wage;
+            for (const entry of wageHistory) {
+              if (entry.effectiveFrom <= today) currentWage = entry.wage;
+            }
+            return { ...w, dailyWage: currentWage, wageHistory };
+          }),
+        }));
+        const updated = get().workers.find((w) => w.id === workerId);
+        if (updated) {
+          supabase
+            .from('workers')
+            .update({ daily_wage: updated.dailyWage, wage_history: updated.wageHistory })
+            .eq('id', workerId)
+            .then(() => {});
+        }
       },
 
       editAdvance: (id, { amount, date, note }) => {

@@ -10,10 +10,16 @@ export interface User {
   role: UserRole;
 }
 
+export interface WageEntry {
+  wage: number;
+  effectiveFrom: string; // ISO date YYYY-MM-DD
+}
+
 export interface Worker {
   id: string;
   name: string;
-  dailyWage: number;
+  dailyWage: number; // current effective wage (kept in sync with latest wageHistory entry)
+  wageHistory?: WageEntry[]; // ascending by effectiveFrom
   previousBalance: number;
   active: boolean;
   settled?: boolean;

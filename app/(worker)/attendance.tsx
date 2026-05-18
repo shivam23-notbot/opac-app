@@ -24,6 +24,7 @@ import {
   DollarSign,
   WifiOff,
   Pencil,
+  TrendingUp,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS } from '@/constants';
@@ -66,6 +67,8 @@ export default function AttendanceScreen() {
   const addAdvance = useWorkersStore((s) => s.addAdvance);
   const editAdvance = useWorkersStore((s) => s.editAdvance);
   const deleteAdvance = useWorkersStore((s) => s.deleteAdvance);
+  const updateWorkerWage = useWorkersStore((s) => s.updateWorkerWage);
+  const allWorkersStore = useWorkersStore((s) => s.workers);
   const allAdvances = useWorkersStore((s) => s.advances);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
@@ -92,6 +95,10 @@ export default function AttendanceScreen() {
   const [editAdvanceId, setEditAdvanceId] = useState<string | null>(null);
   const [deleteAdvanceTarget, setDeleteAdvanceTarget] = useState<{ id: string; workerName: string; amount: number } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [showWageSheet, setShowWageSheet] = useState(false);
+  const [wageWorkerId, setWageWorkerId] = useState('');
+  const [newWageAmt, setNewWageAmt] = useState('');
+  const [newWageDate, setNewWageDate] = useState(todayISO());
 
   const records = getRecordsForDate(selectedDate);
   const workers = getWorkersForDate(selectedDate);
@@ -290,6 +297,29 @@ export default function AttendanceScreen() {
     });
     setDeleteAdvanceTarget(null);
     showToast('success', 'Advance deleted');
+  };
+
+  const handleUpdateWage = () => {
+    const wage = parseFloat(newWageAmt);
+    if (isNaN(wage) || wage <= 0) {
+      showToast('error', 'Enter a valid wage amount');
+      return;
+    }
+    const wageWorker = allWorkersStore.find((w) => w.id === wageWorkerId);
+    if (!wageWorker) return;
+    updateWorkerWage(wageWorkerId, wage, newWageDate);
+    logAudit({
+      userId: user!.id,
+      userName: user!.name,
+      action: 'update_wage',
+      entity: 'worker',
+      entityId: wageWorkerId,
+      detail: `${wageWorker.name}: wage updated to ₹${wage}/day effective ${newWageDate}`,
+    });
+    setShowWageSheet(false);
+    setNewWageAmt('');
+    setNewWageDate(todayISO());
+    showToast('success', `Wage updated to ₹${wage} from ${newWageDate}`);
   };
 
   return (
@@ -536,13 +566,27 @@ export default function AttendanceScreen() {
                         <DollarSign size={15} color={COLORS.textTertiary} />
                       </Pressable>
                       {role === 'admin' && (
-                        <Pressable
-                          onPress={() => setRemoveTarget({ id: worker.id, name: worker.name })}
-                          hitSlop={10}
-                          style={{ padding: 4 }}
-                        >
-                          <Trash2 size={15} color={COLORS.textTertiary} />
-                        </Pressable>
+                        <>
+                          <Pressable
+                            onPress={() => {
+                              setWageWorkerId(worker.id);
+                              setNewWageAmt('');
+                              setNewWageDate(todayISO());
+                              setShowWageSheet(true);
+                            }}
+                            hitSlop={10}
+                            style={{ padding: 4 }}
+                          >
+                            <TrendingUp size={15} color={COLORS.textTertiary} />
+                          </Pressable>
+                          <Pressable
+                            onPress={() => setRemoveTarget({ id: worker.id, name: worker.name })}
+                            hitSlop={10}
+                            style={{ padding: 4 }}
+                          >
+                            <Trash2 size={15} color={COLORS.textTertiary} />
+                          </Pressable>
+                        </>
                       )}
                     </>
                   )}
@@ -914,6 +958,60 @@ export default function AttendanceScreen() {
         <View style={{ marginTop: 8 }}>
           <PrimaryButton label="Add Worker" onPress={handleAddWorker} size="lg" />
         </View>
+      </BottomSheet>
+
+      <BottomSheet
+        open={showWageSheet}
+        onClose={() => { setShowWageSheet(false); setNewWageAmt(''); setNewWageDate(todayISO()); }}
+        title="Update Wage"
+      >
+        {(() => {
+          const wageWorker = allWorkersStore.find((w) => w.id === wageWorkerId);
+          if (!wageWorker) return null;
+          const history = wageWorker.wageHistory ?? [{ wage: wageWorker.dailyWage, effectiveFrom: wageWorker.createdAt.slice(0, 10) }];
+          return (
+            <>
+              <View style={{ backgroundColor: COLORS.bgTertiary, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 11, color: COLORS.textTertiary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+                  {wageWorker.name}
+                </Text>
+                <Text style={{ fontFamily: FONTS.sansExtraBold, fontSize: 20, color: COLORS.textPrimary }}>
+                  ₹{wageWorker.dailyWage}<Text style={{ fontFamily: FONTS.sansMedium, fontSize: 13, color: COLORS.textSecondary }}>/day (current)</Text>
+                </Text>
+                {history.length > 0 && (
+                  <View style={{ marginTop: 10 }}>
+                    {[...history].reverse().map((e, i) => (
+                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                        <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textSecondary }}>
+                          From {e.effectiveFrom}
+                        </Text>
+                        <Text style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.textPrimary }}>
+                          ₹{e.wage}/day
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+              <TextField
+                label="New Daily Wage (₹)"
+                value={newWageAmt}
+                onChangeText={setNewWageAmt}
+                keyboardType="numeric"
+                placeholder={String(wageWorker.dailyWage)}
+              />
+              <InlineDatePicker
+                label="Effective From"
+                value={newWageDate}
+                onChange={setNewWageDate}
+                maxDate={todayISO()}
+              />
+              <View style={{ marginTop: 8 }}>
+                <PrimaryButton label="Save Wage" onPress={handleUpdateWage} size="lg" icon={<TrendingUp size={16} color="#fff" />} />
+              </View>
+            </>
+          );
+        })()}
       </BottomSheet>
 
       <ConfirmDialog

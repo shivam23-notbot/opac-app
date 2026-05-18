@@ -15,10 +15,15 @@ interface AdvancePayment {
   note?: string;
   recordedBy: string;
 }
+interface WageEntry {
+  wage: number;
+  effectiveFrom: string;
+}
 interface Worker {
   id: string;
   name: string;
   dailyWage: number;
+  wageHistory?: WageEntry[];
   previousBalance: number;
   active: boolean;
   settled?: boolean;
@@ -84,6 +89,23 @@ export function daysOfMonth(monthKey: string): string[] {
   return out;
 }
 
+export function wageForDate(worker: Worker, dateISO: string): number {
+  const history = worker.wageHistory;
+  if (!history || history.length === 0) return worker.dailyWage;
+  let applicable: WageEntry | undefined;
+  for (const entry of history) {
+    if (entry.effectiveFrom <= dateISO) {
+      if (!applicable || entry.effectiveFrom > applicable.effectiveFrom) {
+        applicable = entry;
+      }
+    }
+  }
+  if (!applicable) {
+    return [...history].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0].wage;
+  }
+  return applicable.wage;
+}
+
 export function statusLabel(status: AttendanceStatus | null): string {
   if (status === null) return '—';
   if (status === 'full') return 'Full Day';
@@ -123,7 +145,7 @@ function buildSingleMonth(
     const dayRec = records[date];
     const rec = dayRec?.[worker.id];
     if (!rec) return;
-    gross += earningsFor(rec.status, worker.dailyWage);
+    gross += earningsFor(rec.status, wageForDate(worker, date));
   });
   const totalAdvances = allAdvances
     .filter((a) => a.workerId === worker.id && monthKeyFromISO(a.date) === monthKey)
@@ -186,7 +208,8 @@ export function computeMonthlySalary(
   const dailyLines: SalaryDayLine[] = days.map((date) => {
     const rec = records[date]?.[worker.id];
     const status = rec?.status ?? null;
-    const earned = earningsFor(status, worker.dailyWage);
+    const wage = wageForDate(worker, date);
+    const earned = earningsFor(status, wage);
     grossEarned += earned;
     if (status === 'full') presentDays++;
     else if (status === 'absent') absentDays++;
@@ -197,7 +220,7 @@ export function computeMonthlySalary(
       weekday: weekdayShort(date),
       status,
       statusLabel: statusLabel(status),
-      calc: earningsCalcString(status, worker.dailyWage),
+      calc: earningsCalcString(status, wage),
       earned,
     };
   });
