@@ -5,7 +5,7 @@ import { TextField } from '@/components/TextField';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { DatePickerModal } from '@/components/DatePickerModal';
+import { InlineDatePicker } from '@/components/InlineDatePicker';
 import { useAttendanceStore } from '@/store/attendanceStore';
 import { useWorkersStore } from '@/store/workersStore';
 import { useAuthStore } from '@/store/authStore';
@@ -32,23 +32,25 @@ function offsetDate(base: string, days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function statusLabel(status: AttendanceStatus | undefined): string {
-  if (!status) return '';
+function statusLabel(status: AttendanceStatus | undefined, night?: boolean): string {
+  if (!status) return night ? 'Night' : '';
   if (status === 'absent') return 'Absent';
-  if (status === 'full') return 'Full Day';
-  if (typeof status === 'object') return `${status.hours}h`;
+  if (status === 'night') return 'Night';
+  if (status === 'full') return night ? 'Full Day + Night' : 'Full Day';
+  if (typeof status === 'object') return night ? `${status.hours}h + Night` : `${status.hours}h`;
   return '';
 }
 
 function statusColor(status: AttendanceStatus | undefined): string {
   if (!status) return COLORS.textTertiary;
   if (status === 'absent') return COLORS.error;
-  if (status === 'full') return COLORS.accent;
+  if (status === 'full' || status === 'night') return COLORS.accent;
   return COLORS.warning;
 }
 
 export default function AttendanceScreen() {
   const mark = useAttendanceStore((s) => s.mark);
+  const toggleNight = useAttendanceStore((s) => s.toggleNight);
   const getRecordsForDate = useAttendanceStore((s) => s.getRecordsForDate);
   const canEdit = useAttendanceStore((s) => s.canEdit);
   const getActiveWorkers = useWorkersStore((s) => s.getActiveWorkers);
@@ -73,7 +75,6 @@ export default function AttendanceScreen() {
   const [newWage, setNewWage] = useState('');
   const [newBalance, setNewBalance] = useState('');
   const [newJoinDate, setNewJoinDate] = useState(todayISO());
-  const [showJoinDatePicker, setShowJoinDatePicker] = useState(false);
 
   const [advAmt, setAdvAmt] = useState('');
   const [advDate, setAdvDate] = useState(todayISO());
@@ -109,13 +110,34 @@ export default function AttendanceScreen() {
     }
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     mark(selectedDate, workerId, status, user!.id, user!.name);
+    const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
+    const currentNight = records[workerId]?.night ?? false;
     logAudit({
       userId: user!.id,
       userName: user!.name,
       action: 'mark_attendance',
       entity: 'attendance',
       entityId: `${selectedDate}:${workerId}`,
-      detail: `${statusLabel(status)} on ${selectedDate}`,
+      detail: `${workerName}: ${statusLabel(status, currentNight)} on ${selectedDate}`,
+    });
+  };
+
+  const handleToggleNight = (workerId: string) => {
+    if (!editable) {
+      showToast('error', 'Cannot edit entries older than 3 days');
+      return;
+    }
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    toggleNight(selectedDate, workerId, user!.id, user!.name);
+    const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
+    const wasNight = records[workerId]?.night ?? false;
+    logAudit({
+      userId: user!.id,
+      userName: user!.name,
+      action: 'mark_attendance',
+      entity: 'attendance',
+      entityId: `${selectedDate}:${workerId}`,
+      detail: `${workerName}: Night shift ${wasNight ? 'removed' : 'added'} on ${selectedDate}`,
     });
   };
 
@@ -336,8 +358,10 @@ export default function AttendanceScreen() {
         {workers.map((worker) => {
           const rec = records[worker.id];
           const currentStatus = rec?.status;
+          const currentNight = rec?.night ?? false;
           const isHoursMode = typeof currentStatus === 'object';
           const hoursOpen = hoursInput[worker.id] !== undefined;
+          const isAbsent = currentStatus === 'absent';
           const dayAdvances = allAdvances.filter(
             (a) => a.workerId === worker.id && a.date === selectedDate
           );
@@ -391,7 +415,7 @@ export default function AttendanceScreen() {
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  {currentStatus && (
+                  {(currentStatus || currentNight) && (
                     <View
                       style={{
                         paddingHorizontal: 8,
@@ -409,7 +433,7 @@ export default function AttendanceScreen() {
                           textTransform: 'uppercase',
                         }}
                       >
-                        {statusLabel(currentStatus)}
+                        {statusLabel(currentStatus, currentNight)}
                       </Text>
                     </View>
                   )}
@@ -441,10 +465,11 @@ export default function AttendanceScreen() {
               </View>
 
               {/* Pills */}
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
                 {(
                   [
                     { key: 'present', label: 'Present', color: COLORS.accent },
+                    { key: 'night', label: 'Night', color: '#6366f1' },
                     { key: 'absent', label: 'Absent', color: COLORS.error },
                     { key: 'hours', label: 'Hours', color: COLORS.warning },
                   ] as const
@@ -452,9 +477,12 @@ export default function AttendanceScreen() {
                   const selected =
                     btn.key === 'present'
                       ? currentStatus === 'full'
-                      : btn.key === 'absent'
-                        ? currentStatus === 'absent'
-                        : isHoursMode || hoursOpen;
+                      : btn.key === 'night'
+                        ? currentNight
+                        : btn.key === 'absent'
+                          ? currentStatus === 'absent'
+                          : isHoursMode || hoursOpen;
+                  const disabled = btn.key !== 'absent' && isAbsent;
                   return (
                     <Pressable
                       key={btn.key}
@@ -463,6 +491,7 @@ export default function AttendanceScreen() {
                           showToast('error', 'Cannot edit entries older than 3 days');
                           return;
                         }
+                        if (disabled) return;
                         if (btn.key === 'present') {
                           handleMark(worker.id, 'full');
                           setHoursInput((prev) => {
@@ -470,6 +499,8 @@ export default function AttendanceScreen() {
                             delete n[worker.id];
                             return n;
                           });
+                        } else if (btn.key === 'night') {
+                          handleToggleNight(worker.id);
                         } else if (btn.key === 'absent') {
                           handleMark(worker.id, 'absent');
                           setHoursInput((prev) => {
@@ -494,12 +525,13 @@ export default function AttendanceScreen() {
                         borderWidth: 1,
                         borderColor: selected ? btn.color : COLORS.borderColor,
                         backgroundColor: selected ? btn.color + '14' : COLORS.bgSecondary,
+                        opacity: disabled ? 0.35 : 1,
                       }}
                     >
                       <Text
                         style={{
                           fontFamily: FONTS.sansBold,
-                          fontSize: 12,
+                          fontSize: 11,
                           letterSpacing: 0.4,
                           textTransform: 'uppercase',
                           color: selected ? btn.color : COLORS.textSecondary,
@@ -577,7 +609,7 @@ export default function AttendanceScreen() {
                     marginTop: 8,
                   }}
                 >
-                  By {rec.recordedBy === user?.id ? 'you' : displayNameFor(rec.recordedBy)} ·{' '}
+                  By {rec.recordedBy === user?.id ? 'you' : (rec.recordedByName ?? displayNameFor(rec.recordedBy))} ·{' '}
                   {new Date(rec.recordedAt).toLocaleTimeString('en-IN', {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -717,55 +749,17 @@ export default function AttendanceScreen() {
           placeholder="0"
         />
 
-        <View style={{ marginBottom: 16 }}>
-          <Text
-            style={{
-              fontFamily: FONTS.sansBold,
-              fontSize: 11,
-              letterSpacing: 1,
-              textTransform: 'uppercase',
-              color: COLORS.textSecondary,
-              marginBottom: 6,
-            }}
-          >
-            Join Date
-          </Text>
-          <Pressable
-            onPress={() => setShowJoinDatePicker(true)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: COLORS.borderColor,
-              backgroundColor: COLORS.bgTertiary,
-            }}
-          >
-            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 14, color: COLORS.textPrimary }}>
-              {newJoinDate}
-            </Text>
-            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textTertiary }}>
-              tap to change
-            </Text>
-          </Pressable>
-        </View>
+        <InlineDatePicker
+          label="Join Date"
+          value={newJoinDate}
+          onChange={setNewJoinDate}
+          maxDate={todayISO()}
+        />
 
         <View style={{ marginTop: 8 }}>
           <PrimaryButton label="Add Worker" onPress={handleAddWorker} size="lg" />
         </View>
       </BottomSheet>
-
-      <DatePickerModal
-        visible={showJoinDatePicker}
-        value={newJoinDate}
-        label="Join Date"
-        maxDate={todayISO()}
-        onConfirm={(d) => setNewJoinDate(d)}
-        onClose={() => setShowJoinDatePicker(false)}
-      />
 
       <ConfirmDialog
         open={removeTarget !== null}

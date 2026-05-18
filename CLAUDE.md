@@ -27,7 +27,7 @@ All `npm` start scripts wrap Expo CLI with `NODE_OPTIONS=--no-experimental-requi
 
 Install with `npm install --legacy-peer-deps` (Expo 54 + RN 0.81 peer-dep mismatches).
 
-Demo credentials currently exist in the project's Supabase Auth and are linked to `app_users` rows: `admin@opac.in / admin123`, `manager@opac.in / manager123`, `supervisor@opac.in / worker123`, `operator@opac.in / worker123`. These are **not** seeded by the app — they were created by the security migration. Treat the passwords as throwaway; rotate before any non-dev usage. For fresh Supabase projects, follow the bootstrap recipe in `README.md`.
+Demo credentials exist in Supabase Auth and are linked to `app_users` rows: `admin@opac.in / admin123`, `manager@opac.in / manager123`, `supervisor@opac.in / worker123`, `operator@opac.in / worker123`. Treat the passwords as throwaway; rotate before any non-dev usage. For fresh Supabase projects, follow the bootstrap recipe in `README.md`.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ RLS is enabled on every table. Identity comes from Supabase Auth JWTs (`auth.uid
 Auth flow: `useAuthStore.login(email, password)` calls `supabase.auth.signInWithPassword`, then looks up the matching `app_users` row by `auth_user_id`. There is **no client-side credential comparison** and **no `password` column** on `app_users` — Supabase Auth owns credentials. User CRUD that touches `auth.users` (create / delete / password reset) goes through the `manage-users` Edge Function with `verify_jwt: true` and a service-role-backed admin check.
 
 **Sync pattern** used in every store:
-1. `hydrate()` — called once at startup from `app/_layout.tsx` via `Promise.all`. Fetches all rows from Supabase, rebuilds local Zustand state. No automatic seeding — fresh installs bootstrap via the SQL recipe in `README.md`.
+1. `hydrate()` — called once at startup from `app/_layout.tsx` via `Promise.all`, and **again inside `authStore.login()` after every successful login**. The second call ensures stale AsyncStorage cache from a previous session is replaced with live Supabase data immediately after login, not just on next cold start.
 2. **Optimistic mutations** — every write (`addUser`, `mark`, `record`, etc.) updates local Zustand state immediately (no spinner), then fires a Supabase insert/update/delete in the background. On Supabase error, the local state is rolled back.
 3. AsyncStorage `persist` middleware is still present as a local cache — so the last known state is available instantly on next launch before `hydrate()` completes. The users list (`usersStore`) is **not persisted** — it lives in memory only after `hydrate()`.
 
@@ -52,10 +52,13 @@ If Supabase tables don't exist yet, `hydrate()` fails silently (`.catch(() => {}
 File-based routing with three route groups:
 - `app/(auth)/` — login screen, no auth required
 - `app/(worker)/` — bottom tab navigator: Home (dashboard), Attendance, Production, Dispatch
-- `app/(admin)/` — six screens (Dashboard, Attendance, Production, Dispatch, Reports, Users). On web a sidebar layout renders them all; on mobile they appear as a bottom tab bar
+- `app/(admin)/` — six screens (Dashboard, Attendance, Production, Dispatch, Reports, Users). Wide viewports (≥768 px) get a sidebar layout; narrow viewports and native get a bottom tab bar.
 - `app/stock-update/[productId]` — modal screen pushed from the production tab
 
-`app/index.tsx` reads auth state from `useAuthStore` and redirects to the correct group. Guards live in each group's `_layout.tsx` — non-admins are redirected to login if they hit `/(admin)/*`.
+`app/index.tsx` reads auth state from `useAuthStore` and redirects to the correct group. Guards live in each group's `_layout.tsx` — non-admins are redirected to login if they hit `/(admin)/*`. **Both layout guards check `_hasHydrated` before redirecting** — return `null` until AsyncStorage has rehydrated, otherwise the still-null `role` causes a spurious redirect to login on cold start.
+
+### Responsive layout
+`hooks/useIsMobile.ts` exports `useIsMobile(): boolean` (true when `useWindowDimensions().width < 768`). Use this — not `Platform.OS` — to branch between sidebar and tab-bar layouts. `Platform.OS === 'web'` only distinguishes runtime platform, not viewport size; a phone browser is `'web'` but narrow. Both `(admin)/_layout.tsx` and `(worker)/_layout.tsx` use this hook.
 
 Several admin screens are thin re-exports of the worker version (e.g. `app/(admin)/dispatch.tsx` is `export { default } from '@/app/(worker)/dispatch'`). Behavior diverges via the `role` from `useAuthStore` (e.g. delete buttons only render for admins; the worker-deletion icon on `(worker)/attendance.tsx` is admin-only).
 
@@ -64,9 +67,9 @@ All stores are in `store/`. Each uses `persist` middleware with a unique storage
 
 | Store | Key data | Notable methods |
 |---|---|---|
-| `authStore` | `user`, `role`, `_hasHydrated` | `login()` delegates to `usersStore.findByCredentials`; `logout()` |
-| `usersStore` | `users[]` (email/password/name/role) | `addUser()`, `updateUser()`, `removeUser()`, `findByCredentials()`. Guards prevent removing the last admin. Seeded from `mocks/users.ts` on first hydrate |
-| `workersStore` | `workers[]`, `advances[]` | `addWorker()`, `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `getTotalAdvances()` |
+| `authStore` | `user`, `role`, `_hasHydrated` | `login()` calls Supabase Auth then looks up `app_users` by `auth_user_id`; re-hydrates all stores on success; `logout()` |
+| `usersStore` | `users[]` (email/name/role — no password) | `addUser()`, `updateUser()`, `removeUser()`. User CRUD goes through the `manage-users` Edge Function. Guards prevent removing the last admin. **Not persisted to AsyncStorage.** |
+| `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `getTotalAdvances()` |
 | `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>` | `mark()`, `getRecordsForDate()`, `canEdit(date, isAdmin)` |
 | `inventoryStore` | `products[]` | `updateStock()` (writes today's row only), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()` |
 | `dispatchStore` | `entries[]` | `record()` (also `inventoryStore.decrementStock`), `editEntry()` (diffs bags/productId and reconciles stock — see below), `deleteEntry()` (calls `restoreStock`), `getTodayEntries()` |
@@ -100,6 +103,11 @@ Per-day earnings: `full → dailyWage`, `{ hours } → (hours/12) * dailyWage`, 
 
 A worker with `settled: true` represents a closed account; the Reports → Salary tab shows them by default (toggle is open by default) and exposes a Reopen action via `ConfirmDialog`.
 
+**Salary tab month-range filtering:** `salaryRows` and `removedRows` in `reports.tsx` are filtered so a worker only appears for months they were actually employed:
+- Active workers: hidden if `salaryMonth < worker.createdAt.slice(0, 7)` (not hired yet)
+- Removed workers: also hidden if `salaryMonth > worker.removedAt.slice(0, 7)` (already gone)
+This means a worker hired 2026-03-05 and removed 2026-04-10 appears only in March and April salary tabs.
+
 ### PDF salary reports (`lib/salaryPdf.ts`)
 `generateWorkerMonthlyPDF(worker, monthKey, records, allAdvances)` is the single entry point. Internals:
 - Builds A4 HTML with the carry-in chain table, attendance table (every day of the month), advance table, and the `A − B + C = NET PAYABLE` totals box.
@@ -123,8 +131,9 @@ The actual theme is **warm / light** (Anthropic-ish). Custom color tokens are in
 
 For `style={}` prop values (not className) use the constants from `constants/index.ts` (`COLORS.bgPrimary`, `COLORS.accent`, etc.) rather than literal hex — the file also exposes soft-accent variants (`accentSoftBg`, `accentSoftBorder`, `errorSoftBg`) that don't exist in Tailwind. `FONTS` in the same file maps to the Inter / Source Serif 4 families loaded by `@expo-google-fonts`.
 
-### Destructive actions
-Use `components/ConfirmDialog.tsx` for every delete / settle / reopen. Render it once at the bottom of the screen, gated on a `*Target` state object that the icon's `onPress` sets. The actual mutation runs in the `onConfirm` callback. This pattern is in use across `(admin)/users.tsx`, `(admin)/reports.tsx`, `(worker)/attendance.tsx`, and `(worker)/dispatch.tsx`.
+### Shared UI components
+- `components/ConfirmDialog.tsx` — use for every delete / settle / reopen. Render it once at the bottom of the screen, gated on a `*Target` state object that the icon's `onPress` sets. The actual mutation runs in the `onConfirm` callback.
+- `components/DatePickerModal.tsx` — reusable date picker modal. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?` (clamps the +1 day button and validates input), `onConfirm`, `onClose`. Used in the "Add Worker" (Join Date) and "Add Product" (Start Date) sheets, and in `reports.tsx` date-range pickers.
 
 ### Audit Trail Pattern
 Every mutation that changes business data must call `useAuditStore.getState().log(...)` with `userId`, `userName`, `action`, `entity`, `entityId`, and a human-readable `detail`. Audit logs are displayed only in the admin Reports → Audit Log tab. Retention is enforced by `AUDIT_LOG_RETENTION_DAYS` (90 days) — logs never auto-prune unless `pruneOldLogs()` is called.
@@ -140,6 +149,8 @@ Dispatch only operates on products with `currentBags > 0`. The picker filters by
 
 ### Production rule
 `inventoryStore.updateStock` only ever writes the entry whose `date === todayISO()`. Past `stockHistory` rows are immutable through the UI — there is no "edit a past production day" API. If you need to backfill, add a fresh helper rather than mutating history in place (downstream openings rely on history being append-only).
+
+`inventoryStore.addProduct` accepts an optional `entryDate` (defaults to `todayISO()`). The "Add Product" sheet exposes a **Start Date** picker so opening stock can be backdated to the actual first production day.
 
 ### Toast
 `useUiStore().showToast('success' | 'error', message)` — the `<Toast />` component is mounted once in `app/_layout.tsx` at z-index 9999.

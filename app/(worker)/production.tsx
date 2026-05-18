@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, Pressable, Animated, Easing } from 'react-native';
-import { DatePickerModal } from '@/components/DatePickerModal';
+import { InlineDatePicker } from '@/components/InlineDatePicker';
 import { useRouter } from 'expo-router';
 import { TopBar } from '@/components/TopBar';
 import { Card } from '@/components/ui/Card';
@@ -491,7 +491,6 @@ export default function ProductionScreen() {
   const [newCode, setNewCode] = useState('');
   const [newBags, setNewBags] = useState('');
   const [newEntryDate, setNewEntryDate] = useState(todayISO());
-  const [showEntryDatePicker, setShowEntryDatePicker] = useState(false);
   const [retireTarget, setRetireTarget] = useState<Product | null>(null);
   const [unretireTarget, setUnretireTarget] = useState<Product | null>(null);
 
@@ -699,41 +698,12 @@ export default function ProductionScreen() {
           hint={newBags ? `= ${(parseInt(newBags) || 0) * 25} kg` : '1 bag = 25 kg'}
         />
 
-        <View style={{ marginBottom: 16 }}>
-          <Text
-            style={{
-              fontFamily: FONTS.sansBold,
-              fontSize: 11,
-              letterSpacing: 1,
-              textTransform: 'uppercase',
-              color: COLORS.textSecondary,
-              marginBottom: 6,
-            }}
-          >
-            Start Date
-          </Text>
-          <Pressable
-            onPress={() => setShowEntryDatePicker(true)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: COLORS.borderColor,
-              backgroundColor: COLORS.bgTertiary,
-            }}
-          >
-            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 14, color: COLORS.textPrimary }}>
-              {newEntryDate}
-            </Text>
-            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textTertiary }}>
-              tap to change
-            </Text>
-          </Pressable>
-        </View>
+        <InlineDatePicker
+          label="Start Date"
+          value={newEntryDate}
+          onChange={setNewEntryDate}
+          maxDate={todayISO()}
+        />
 
         <View style={{ marginTop: 8 }}>
           <PrimaryButton
@@ -744,15 +714,6 @@ export default function ProductionScreen() {
           />
         </View>
       </BottomSheet>
-
-      <DatePickerModal
-        visible={showEntryDatePicker}
-        value={newEntryDate}
-        label="Start Date"
-        maxDate={todayISO()}
-        onConfirm={(d) => setNewEntryDate(d)}
-        onClose={() => setShowEntryDatePicker(false)}
-      />
 
       <ConfirmDialog
         open={retireTarget !== null}

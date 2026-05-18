@@ -18,6 +18,12 @@ interface AttendanceState {
     userId: string,
     userName: string
   ) => void;
+  toggleNight: (
+    date: string,
+    employeeId: string,
+    userId: string,
+    userName: string
+  ) => void;
   getRecordsForDate: (date: string) => Record<string, AttendanceRecord>;
   getTodayRecords: () => Record<string, AttendanceRecord>;
   canEdit: (date: string, isAdmin: boolean) => boolean;
@@ -41,22 +47,25 @@ export const useAttendanceStore = create<AttendanceState>()(
           records[date][empId] = {
             employeeId: empId,
             status: row.status as AttendanceStatus,
+            night: (row.night as boolean) ?? false,
             recordedBy: row.recorded_by as string,
+            recordedByName: row.recorded_by_name as string | undefined,
             recordedAt: row.recorded_at as string,
           };
         }
         set({ records, _hasHydrated: true });
       },
 
-      mark: (date, employeeId, status, userId, _userName) => {
+      mark: (date, employeeId, status, userId, userName) => {
         const recordedAt = new Date().toISOString();
+        const existingNight = get().records[date]?.[employeeId]?.night ?? false;
         // Optimistic
         set((state) => ({
           records: {
             ...state.records,
             [date]: {
               ...(state.records[date] ?? {}),
-              [employeeId]: { employeeId, status, recordedBy: userId, recordedAt },
+              [employeeId]: { employeeId, status, night: existingNight, recordedBy: userId, recordedByName: userName, recordedAt },
             },
           },
         }));
@@ -67,6 +76,40 @@ export const useAttendanceStore = create<AttendanceState>()(
             date,
             employee_id: employeeId,
             status,
+            night: existingNight,
+            recorded_by_name: userName,
+            recorded_at: recordedAt,
+          },
+          { onConflict: 'date,employee_id' }
+        ).then(() => {});
+      },
+
+      toggleNight: (date, employeeId, userId, userName) => {
+        const recordedAt = new Date().toISOString();
+        const existing = get().records[date]?.[employeeId];
+        const wasNight = existing?.night ?? false;
+        const newNight = !wasNight;
+        // If no day status yet (or only night was set), use 'night' as the status marker
+        const currentStatus: AttendanceStatus = (existing?.status && existing.status !== 'night')
+          ? existing.status
+          : 'night';
+        set((state) => ({
+          records: {
+            ...state.records,
+            [date]: {
+              ...(state.records[date] ?? {}),
+              [employeeId]: { employeeId, status: currentStatus, night: newNight, recordedBy: userId, recordedByName: userName, recordedAt },
+            },
+          },
+        }));
+        supabase.from('attendance').upsert(
+          {
+            id: generateId(),
+            date,
+            employee_id: employeeId,
+            status: currentStatus,
+            night: newNight,
+            recorded_by_name: userName,
             recorded_at: recordedAt,
           },
           { onConflict: 'date,employee_id' }

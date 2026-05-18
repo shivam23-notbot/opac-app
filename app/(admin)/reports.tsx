@@ -105,18 +105,21 @@ function TableHeader({ cols }: { cols: string[] }) {
   );
 }
 
-function statusDisplayLabel(status: AttendanceStatus): string {
-  if (status === 'full') return 'Full';
+function statusDisplayLabel(status: AttendanceStatus, night?: boolean): string {
   if (status === 'absent') return 'Absent';
-  if (typeof status === 'object' && 'hours' in status) return `${status.hours}h`;
+  if (status === 'night') return 'Night';
+  if (status === 'full') return night ? 'Full + Night' : 'Full';
+  if (typeof status === 'object' && 'hours' in status) return night ? `${status.hours}h + Night` : `${status.hours}h`;
   return String(status);
 }
 
-function computeEarnings(status: AttendanceStatus, dailyWage: number): number {
-  if (status === 'full') return dailyWage;
+function computeEarnings(status: AttendanceStatus, dailyWage: number, night?: boolean): number {
   if (status === 'absent') return 0;
+  const nightBonus = night ? dailyWage : 0;
+  if (status === 'full') return dailyWage + nightBonus;
+  if (status === 'night') return dailyWage;
   if (typeof status === 'object' && 'hours' in status) {
-    return (1 / 12) * status.hours * dailyWage;
+    return (1 / 12) * status.hours * dailyWage + nightBonus;
   }
   return 0;
 }
@@ -1923,20 +1926,16 @@ export default function ReportsScreen() {
                 <View style={{ marginBottom: 14 }}>
                   {detailAttendance.map((e, i) => {
                     const status = e.rec!.status;
-                    const label =
-                      status === 'full'
-                        ? 'Full'
-                        : status === 'absent'
-                          ? 'Absent'
-                          : `${(status as { hours: number }).hours}h`;
+                    const night = e.rec!.night ?? false;
+                    const label = statusDisplayLabel(status, night);
                     const color =
-                      status === 'full'
-                        ? COLORS.accent
-                        : status === 'absent'
-                          ? COLORS.error
+                      status === 'absent'
+                        ? COLORS.error
+                        : status === 'full' || status === 'night'
+                          ? COLORS.accent
                           : COLORS.warning;
                     const earned = detailWorker
-                      ? computeEarnings(status, detailWorker.dailyWage)
+                      ? computeEarnings(status, detailWorker.dailyWage, night)
                       : 0;
                     return (
                       <View

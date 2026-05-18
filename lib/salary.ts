@@ -63,27 +63,33 @@ export function daysOfMonth(monthKey: string): string[] {
   return out;
 }
 
-export function statusLabel(status: AttendanceStatus | null): string {
+export function statusLabel(status: AttendanceStatus | null, night?: boolean): string {
   if (status === null) return '—';
-  if (status === 'full') return 'Full Day';
   if (status === 'absent') return 'Absent';
-  return `${status.hours}h`;
+  if (status === 'night') return 'Night';
+  if (status === 'full') return night ? 'Full Day + Night' : 'Full Day';
+  return night ? `${status.hours}h + Night` : `${status.hours}h`;
 }
 
-export function earningsFor(status: AttendanceStatus | null, dailyWage: number): number {
+export function earningsFor(status: AttendanceStatus | null, dailyWage: number, night?: boolean): number {
   if (status === null || status === 'absent') return 0;
-  if (status === 'full') return dailyWage;
-  return (status.hours / 12) * dailyWage;
+  const nightBonus = night ? dailyWage : 0;
+  if (status === 'full') return dailyWage + nightBonus;
+  if (status === 'night') return dailyWage;
+  return (status.hours / 12) * dailyWage + nightBonus;
 }
 
 export function earningsCalcString(
   status: AttendanceStatus | null,
-  dailyWage: number
+  dailyWage: number,
+  night?: boolean
 ): string {
   if (status === null) return '—';
   if (status === 'absent') return '0';
-  if (status === 'full') return `1 × ₹${dailyWage}`;
-  return `(${status.hours}/12) × ₹${dailyWage}`;
+  const nightPart = night ? ` + 1 × ₹${dailyWage}` : '';
+  if (status === 'full') return `1 × ₹${dailyWage}${nightPart}`;
+  if (status === 'night') return `1 × ₹${dailyWage} (night)`;
+  return `(${status.hours}/12) × ₹${dailyWage}${nightPart}`;
 }
 
 function weekdayShort(dateISO: string): string {
@@ -102,7 +108,7 @@ function buildSingleMonth(
     const dayRec = records[date];
     const rec = dayRec?.[worker.id];
     if (!rec) return;
-    gross += earningsFor(rec.status, worker.dailyWage);
+    gross += earningsFor(rec.status, worker.dailyWage, rec.night);
   });
   const totalAdvances = allAdvances
     .filter((a) => a.workerId === worker.id && monthKeyFromISO(a.date) === monthKey)
@@ -205,7 +211,8 @@ export function computeMonthlySalary(
   const dailyLines: SalaryDayLine[] = days.map((date) => {
     const rec = records[date]?.[worker.id];
     const status = rec?.status ?? null;
-    const earned = earningsFor(status, worker.dailyWage);
+    const night = rec?.night ?? false;
+    const earned = earningsFor(status, worker.dailyWage, night);
     grossEarned += earned;
     if (status === 'full') presentDays++;
     else if (status === 'absent') absentDays++;
@@ -215,8 +222,8 @@ export function computeMonthlySalary(
       date,
       weekday: weekdayShort(date),
       status,
-      statusLabel: statusLabel(status),
-      calc: earningsCalcString(status, worker.dailyWage),
+      statusLabel: statusLabel(status, night),
+      calc: earningsCalcString(status, worker.dailyWage, night),
       earned,
     };
   });

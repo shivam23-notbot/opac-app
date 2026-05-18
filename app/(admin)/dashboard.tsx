@@ -11,16 +11,17 @@ import { subtractDays } from '@/lib/date';
 import type { AttendanceStatus } from '@/types';
 import { COLORS, FONTS } from '@/constants';
 
-function statusLabel(status: AttendanceStatus): string {
-  if (status === 'full') return 'Full Day';
+function statusLabel(status: AttendanceStatus, night?: boolean): string {
   if (status === 'absent') return 'Absent';
-  if (typeof status === 'object') return `${status.hours}h`;
+  if (status === 'night') return 'Night';
+  if (status === 'full') return night ? 'Full Day + Night' : 'Full Day';
+  if (typeof status === 'object') return night ? `${status.hours}h + Night` : `${status.hours}h`;
   return String(status);
 }
 
 function statusColor(status: AttendanceStatus): string {
-  if (status === 'full') return COLORS.accent;
   if (status === 'absent') return COLORS.error;
+  if (status === 'full' || status === 'night') return COLORS.accent;
   return COLORS.warning;
 }
 
@@ -114,7 +115,7 @@ export default function AdminDashboardScreen() {
     .slice(-5)
     .map(([wId, rec]) => {
       const w = workers.find((e) => e.id === wId);
-      return { name: w?.name ?? wId, status: rec.status };
+      return { name: w?.name ?? wId, status: rec.status, night: rec.night ?? false };
     });
 
   const handleLogout = () => {
@@ -308,7 +309,7 @@ export default function AdminDashboardScreen() {
                         textTransform: 'uppercase',
                       }}
                     >
-                      {statusLabel(r.status)}
+                      {statusLabel(r.status, r.night)}
                     </Text>
                   </View>
                 </View>

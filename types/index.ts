@@ -1,5 +1,5 @@
 export type PolymerType = 'HDPE' | 'PP' | 'LDPE';
-export type AttendanceStatus = 'absent' | 'full' | { hours: number };
+export type AttendanceStatus = 'absent' | 'full' | 'night' | { hours: number };
 export type UserRole = 'worker' | 'admin';
 export type ToastType = 'success' | 'error';
 
@@ -34,7 +34,9 @@ export interface AdvancePayment {
 export interface AttendanceRecord {
   employeeId: string;
   status: AttendanceStatus;
+  night: boolean;
   recordedBy: string;
+  recordedByName?: string;
   recordedAt: string;
 }
 
