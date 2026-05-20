@@ -14,6 +14,7 @@ import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { todayISO, formatDateReadable } from '@/lib/date';
 import type { AttendanceStatus } from '@/types';
+import { computeMonthlySalary, shiftMonthKey, currentMonthKey } from '@/lib/salary';
 import {
   CheckCircle,
   Plus,
@@ -60,6 +61,8 @@ export default function AttendanceScreen() {
   const canEdit = useAttendanceStore((s) => s.canEdit);
   const getSyncStatus = useAttendanceStore((s) => s.getSyncStatus);
   const syncStatus = useAttendanceStore((s) => s.syncStatus);
+  const allRecords = useAttendanceStore((s) => s.records);
+  const retrySync = useAttendanceStore((s) => s.retrySync);
   const getActiveWorkers = useWorkersStore((s) => s.getActiveWorkers);
   const getWorkersForDate = useWorkersStore((s) => s.getWorkersForDate);
   const addWorker = useWorkersStore((s) => s.addWorker);
@@ -499,12 +502,20 @@ export default function AttendanceScreen() {
                   marginBottom: 12,
                 }}
               >
-                <View style={{ flex: 1 }}>
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() => {
+                    setWageWorkerId(worker.id);
+                    setNewWageAmt('');
+                    setNewWageDate(todayISO());
+                    setShowWageSheet(true);
+                  }}
+                >
                   <Text
                     style={{
                       fontFamily: FONTS.sansBold,
                       fontSize: 15,
-                      color: COLORS.textPrimary,
+                      color: COLORS.accent,
                     }}
                   >
                     {worker.name}
@@ -520,7 +531,7 @@ export default function AttendanceScreen() {
                     ₹{worker.dailyWage}/day
                     {worker.previousBalance ? ` · bal ₹${worker.previousBalance}` : ''}
                   </Text>
-                </View>
+                </Pressable>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   {/* Sync status indicator */}
                   {rec && workerSyncStatus === 'syncing' && (
@@ -566,27 +577,13 @@ export default function AttendanceScreen() {
                         <DollarSign size={15} color={COLORS.textTertiary} />
                       </Pressable>
                       {role === 'admin' && (
-                        <>
-                          <Pressable
-                            onPress={() => {
-                              setWageWorkerId(worker.id);
-                              setNewWageAmt('');
-                              setNewWageDate(todayISO());
-                              setShowWageSheet(true);
-                            }}
-                            hitSlop={10}
-                            style={{ padding: 4 }}
-                          >
-                            <TrendingUp size={15} color={COLORS.textTertiary} />
-                          </Pressable>
-                          <Pressable
-                            onPress={() => setRemoveTarget({ id: worker.id, name: worker.name })}
-                            hitSlop={10}
-                            style={{ padding: 4 }}
-                          >
-                            <Trash2 size={15} color={COLORS.textTertiary} />
-                          </Pressable>
-                        </>
+                        <Pressable
+                          onPress={() => setRemoveTarget({ id: worker.id, name: worker.name })}
+                          hitSlop={10}
+                          style={{ padding: 4 }}
+                        >
+                          <Trash2 size={15} color={COLORS.textTertiary} />
+                        </Pressable>
                       )}
                     </>
                   )}
@@ -775,23 +772,28 @@ export default function AttendanceScreen() {
               )}
 
               {rec && (
-                <Text
-                  style={{
-                    fontFamily: FONTS.sansMedium,
-                    fontSize: 11,
-                    color: COLORS.textTertiary,
-                    marginTop: 8,
-                  }}
+                <Pressable
+                  onPress={workerSyncStatus === 'error' ? () => retrySync(selectedDate, worker.id) : undefined}
+                  disabled={workerSyncStatus !== 'error'}
+                  style={{ marginTop: 8 }}
                 >
-                  By {rec.recordedBy === user?.id ? 'you' : (rec.recordedByName ?? displayNameFor(rec.recordedBy))} ·{' '}
-                  {new Date(rec.recordedAt).toLocaleTimeString('en-IN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                  {workerSyncStatus === 'error' && (
-                    <Text style={{ color: COLORS.error }}>{' '}· Upload failed — tap to retry</Text>
-                  )}
-                </Text>
+                  <Text
+                    style={{
+                      fontFamily: FONTS.sansMedium,
+                      fontSize: 11,
+                      color: COLORS.textTertiary,
+                    }}
+                  >
+                    By {rec.recordedBy === user?.id ? 'you' : (rec.recordedByName ?? displayNameFor(rec.recordedBy))} ·{' '}
+                    {new Date(rec.recordedAt).toLocaleTimeString('en-IN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {workerSyncStatus === 'error' && (
+                      <Text style={{ color: COLORS.error }}>{' '}· Upload failed — tap to retry</Text>
+                    )}
+                  </Text>
+                </Pressable>
               )}
 
               {dayAdvances.length > 0 && (
@@ -963,12 +965,14 @@ export default function AttendanceScreen() {
       <BottomSheet
         open={showWageSheet}
         onClose={() => { setShowWageSheet(false); setNewWageAmt(''); setNewWageDate(todayISO()); }}
-        title="Update Wage"
+        title="Wage Details"
       >
         {(() => {
           const wageWorker = allWorkersStore.find((w) => w.id === wageWorkerId);
           if (!wageWorker) return null;
           const history = wageWorker.wageHistory ?? [{ wage: wageWorker.dailyWage, effectiveFrom: wageWorker.createdAt.slice(0, 10) }];
+          const prevMK = shiftMonthKey(currentMonthKey(), -1);
+          const prevSalary = computeMonthlySalary(wageWorker, prevMK, allRecords, allAdvances);
           return (
             <>
               <View style={{ backgroundColor: COLORS.bgTertiary, borderRadius: 10, padding: 12, marginBottom: 16 }}>
@@ -993,22 +997,49 @@ export default function AttendanceScreen() {
                   </View>
                 )}
               </View>
-              <TextField
-                label="New Daily Wage (₹)"
-                value={newWageAmt}
-                onChangeText={setNewWageAmt}
-                keyboardType="numeric"
-                placeholder={String(wageWorker.dailyWage)}
-              />
-              <InlineDatePicker
-                label="Effective From"
-                value={newWageDate}
-                onChange={setNewWageDate}
-                maxDate={todayISO()}
-              />
-              <View style={{ marginTop: 8 }}>
-                <PrimaryButton label="Save Wage" onPress={handleUpdateWage} size="lg" icon={<TrendingUp size={16} color="#fff" />} />
+              <View style={{ backgroundColor: COLORS.bgTertiary, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 11, color: COLORS.textTertiary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>
+                  {prevSalary.monthLabel} Summary
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                  <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textSecondary }}>Gross Earned</Text>
+                  <Text style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.accent }}>₹{prevSalary.grossEarned}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                  <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textSecondary }}>Advances</Text>
+                  <Text style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.warning }}>−₹{prevSalary.totalAdvances}</Text>
+                </View>
+                <View style={{ height: 1, backgroundColor: COLORS.borderColor, marginVertical: 6 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                  <Text style={{ fontFamily: FONTS.sansBold, fontSize: 13, color: COLORS.textPrimary }}>Net</Text>
+                  <Text style={{ fontFamily: FONTS.sansExtraBold, fontSize: 13, color: prevSalary.netForMonth >= 0 ? COLORS.accent : COLORS.error }}>
+                    {prevSalary.netForMonth >= 0 ? '₹' : '−₹'}{Math.abs(prevSalary.netForMonth)}
+                  </Text>
+                </View>
+                <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 11, color: COLORS.textTertiary, marginTop: 4 }}>
+                  Present {prevSalary.presentDays}d · Absent {prevSalary.absentDays}d · Partial {prevSalary.partialDays}d
+                </Text>
               </View>
+              {role === 'admin' && (
+                <>
+                  <TextField
+                    label="New Daily Wage (₹)"
+                    value={newWageAmt}
+                    onChangeText={setNewWageAmt}
+                    keyboardType="numeric"
+                    placeholder={String(wageWorker.dailyWage)}
+                  />
+                  <InlineDatePicker
+                    label="Effective From"
+                    value={newWageDate}
+                    onChange={setNewWageDate}
+                    maxDate={todayISO()}
+                  />
+                  <View style={{ marginTop: 8 }}>
+                    <PrimaryButton label="Save Wage" onPress={handleUpdateWage} size="lg" icon={<TrendingUp size={16} color="#fff" />} />
+                  </View>
+                </>
+              )}
             </>
           );
         })()}
