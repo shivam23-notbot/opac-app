@@ -139,12 +139,13 @@ This means a worker hired 2026-03-05 and removed 2026-04-10 appears only in Marc
 
 **Production PDF** — `generateProductionMonthlyPDF(products, monthKey, label, displayNameFor)` builds a day-grouped production report. Call `buildProductionDayGroups` separately if you only need the data without printing.
 
-The Reports → Salary tab has a month stepper (separate from the From/To date pickers, which still drive Production/Dispatch/Audit tabs). "Save All PDFs" generates one separate PDF per worker for the selected month.
+The Reports → Salary tab has a month stepper (separate from the From/To date pickers). "Save All PDFs" generates one separate PDF per worker for the selected salary month. The Production tab has its own independent month stepper (`productionMonth`) used exclusively for PDF generation — the table view still follows `dateFrom`/`dateTo`.
 
 ### Reports screen month vs. range
 - **Salary tab** uses `salaryMonth` (month-only stepper). `salaryRows` and the detail modal both call `computeMonthlySalary(worker, salaryMonth, …)`. Attendance and advance lists inside the modal are scoped to `daysOfMonth(salaryMonth)`.
-- **Production / Dispatch / Audit tabs** use the `dateFrom`/`dateTo` pickers at the top of the screen.
-- Both controls are always visible; each tab reads the one it needs.
+- **Production tab** uses `dateFrom`/`dateTo` for the grouped table display, and a separate `productionMonth` stepper that only governs the "Save PDF" button. The table and PDF can show different time windows simultaneously.
+- **Dispatch / Audit tabs** use only `dateFrom`/`dateTo`.
+- All three controls are always rendered; each tab reads only what it needs.
 
 ### Styling (NativeWind v4 + Tailwind)
 The actual theme is **warm / light** (Anthropic-ish). Custom color tokens are in `tailwind.config.js`. In `className` props use these tokens rather than raw hex:
