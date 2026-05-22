@@ -69,14 +69,24 @@ All stores are in `store/`. Each uses `persist` middleware with a unique storage
 |---|---|---|
 | `authStore` | `user`, `role`, `_hasHydrated` | `login()` calls Supabase Auth then looks up `app_users` by `auth_user_id`; re-hydrates all stores on success; `logout()` |
 | `usersStore` | `users[]` (email/name/role — no password) | `addUser()`, `updateUser()`, `removeUser()`. User CRUD goes through the `manage-users` Edge Function. Guards prevent removing the last admin. **Not persisted to AsyncStorage.** |
-| `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `getTotalAdvances()` |
-| `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>` | `mark()`, `getRecordsForDate()`, `canEdit(date, isAdmin)` |
-| `inventoryStore` | `products[]` | `updateStock()` (writes today's row only), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()` |
-| `dispatchStore` | `entries[]` | `record()` (also `inventoryStore.decrementStock`), `editEntry()` (diffs bags/productId and reconciles stock — see below), `deleteEntry()` (calls `restoreStock`), `getTodayEntries()` |
+| `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `editAdvance()`, `deleteAdvance()`, `updateWorkerWage(id, wage, effectiveFrom)`, `getTotalAdvances()` |
+| `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>`, `syncStatus: Record<string, SyncStatus>` | `mark()`, `unmark()`, `toggleNight()`, `getRecordsForDate()`, `canEdit(date, isAdmin)`, `getSyncStatus(date, employeeId)`, `retrySync(date, employeeId)` |
+| `inventoryStore` | `products[]` | `updateStock()` (accepts optional `date`; omit for today, pass YYYY-MM-DD for backdated entries), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()`, `getProduct(id)` — use this instead of hand-rolling `.products.find()` |
+| `dispatchStore` | `entries[]` | `record()` (stock guard then `inventoryStore.decrementStock`), `editEntry()` (stock guard then diffs bags/productId and reconciles stock — see below), `deleteEntry()` (calls `restoreStock`), `getTodayEntries()` |
 | `auditStore` | `logs[]` | `log()`, `getLogsForEntity()`, `getRecentLogs(days)`, `pruneOldLogs()` |
 | `uiStore` | `toast` | `showToast()`, `hideToast()` |
 
 `store/useAttendanceStore.ts` is an unused legacy file — do not import from it. The canonical attendance store is `store/attendanceStore.ts`.
+
+### Attendance sync details
+Each attendance record tracks its own sync state via `syncStatus: Record<"date:employeeId", SyncStatus>` where `SyncStatus = 'synced' | 'syncing' | 'error'`. Use `getSyncStatus(date, employeeId)` to read it in a component; the worker card renders a spinner (syncing) or `<WifiOff>` icon (error) accordingly.
+
+The underlying `upsertRecord` uses **delete-then-insert** rather than Supabase's `upsert`. This is intentional: the RLS `UPDATE WITH CHECK` policy pins a row to its original author (`recorded_by = auth.uid()`), so a second user re-marking attendance would fail on update. Deleting first lets any authenticated user replace the row. Do not revert this to `upsert`.
+
+`retrySync(date, employeeId)` re-runs `upsertRecord` for a specific record that landed in `'error'` state, without touching the rest of the store.
+
+### Wage history
+`Worker` has a `wageHistory: { wage: number; effectiveFrom: string }[]` field. `updateWorkerWage(id, wage, effectiveFrom)` appends a new entry and re-sorts by date; `worker.dailyWage` always holds the current (latest) wage. The attendance screen shows full wage history by making the worker's name a `<Pressable>` that opens a "Wage Details" bottom sheet — non-admins see read-only history + prior-month salary summary; the update form is admin-only.
 
 Cross-store coupling lives in store actions (`dispatchStore.record` / `.editEntry` / `.deleteEntry` all mutate `inventoryStore`). Don't duplicate that logic in screens.
 
@@ -129,11 +139,14 @@ The actual theme is **warm / light** (Anthropic-ish). Custom color tokens are in
 - Accent: `text-accent` / `bg-accent` (`#D97757` warm orange)
 - Polymer badges: `polymer-hdpe`, `polymer-pp`, `polymer-ldpe`
 
-For `style={}` prop values (not className) use the constants from `constants/index.ts` (`COLORS.bgPrimary`, `COLORS.accent`, etc.) rather than literal hex — the file also exposes soft-accent variants (`accentSoftBg`, `accentSoftBorder`, `errorSoftBg`) that don't exist in Tailwind. `FONTS` in the same file maps to the Inter / Source Serif 4 families loaded by `@expo-google-fonts`.
+For `style={}` prop values (not className) use the constants from `constants/index.ts` (`COLORS.bgPrimary`, `COLORS.accent`, etc.) rather than literal hex — the file also exposes soft-accent variants (`accentSoftBg`, `accentSoftBorder`, `errorSoftBg`) that don't exist in Tailwind. Additional semantic tokens: `COLORS.warning` (amber, used for advances and partial hours), `COLORS.error` (red, used for absent and sync failures).
+
+`FONTS` maps to Inter (sans) and Source Serif 4 (serif) loaded by `@expo-google-fonts`. Inter weights: `sansRegular`, `sansMedium`, `sansSemibold`, `sansBold`, `sansExtraBold`, `sansBlack`. Serif weights: `serifMedium`, `serifSemibold`, `serifBold`. Monospace fallback: `FONTS.mono` (`'ui-monospace'`).
 
 ### Shared UI components
 - `components/ConfirmDialog.tsx` — use for every delete / settle / reopen. Render it once at the bottom of the screen, gated on a `*Target` state object that the icon's `onPress` sets. The actual mutation runs in the `onConfirm` callback.
-- `components/DatePickerModal.tsx` — reusable date picker modal. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?` (clamps the +1 day button and validates input), `onConfirm`, `onClose`. Used in the "Add Worker" (Join Date) and "Add Product" (Start Date) sheets, and in `reports.tsx` date-range pickers.
+- `components/DatePickerModal.tsx` — full-screen modal date picker. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?`, `onConfirm`, `onClose`. Used in `reports.tsx` date-range pickers.
+- `components/InlineDatePicker.tsx` — compact inline date input with `±1 day` buttons and typed entry. Props: `label`, `value`, `onChange`, `maxDate?`. Used inside bottom sheets (Add Worker, Add Product, wage update, advance recording) and the stock-update modal (entry date picker). Prefer this over `DatePickerModal` inside `<BottomSheet>`.
 
 ### Audit Trail Pattern
 Every mutation that changes business data must call `useAuditStore.getState().log(...)` with `userId`, `userName`, `action`, `entity`, `entityId`, and a human-readable `detail`. Audit logs are displayed only in the admin Reports → Audit Log tab. Retention is enforced by `AUDIT_LOG_RETENTION_DAYS` (90 days) — logs never auto-prune unless `pruneOldLogs()` is called.
@@ -141,14 +154,28 @@ Every mutation that changes business data must call `useAuditStore.getState().lo
 ### 3-Day Edit Restriction
 `attendanceStore.canEdit(date, isAdmin)` returns `false` for non-admins editing records older than 3 days. Check this before any attendance mutation and show an error toast if blocked. Admins bypass.
 
+### Utilities
+- `lib/utils.ts` — exports `generateId()` (nanoid non-secure) used for all local IDs before Supabase sync. Also re-exports `todayISO()`.
+- `lib/date.ts` — beyond `todayISO()` and `formatDateReadable()`, exports `relativeTime(iso)` ("5m ago", "Yesterday") used in audit log display, and `subtractDays(n)` for date-range defaults.
+
 ### Units
 1 bag = 25 kg. Use `lib/units.ts` helpers (`formatBagsKg`, `bagsToKg`) for all bag/kg conversions.
 
 ### Dispatch / Stock Coupling
-Dispatch only operates on products with `currentBags > 0`. The picker filters by stock; submission is blocked if bags requested exceeds `currentBags`. Editing an existing dispatch must still find its product via the unfiltered list (so a now-empty product is still resolvable). `editEntry` reconciles stock automatically.
+Dispatch only operates on products with `currentBags > 0`. The picker filters by stock; submission is blocked if bags requested exceeds the effective available stock. Editing an existing dispatch must still find its product via the unfiltered list (so a now-empty product is still resolvable).
+
+Stock is enforced at **two layers**:
+1. **UI** — `effectiveAvailable` is computed as `currentBags + editRestoreBags` where `editRestoreBags` is the original entry's bag count when editing the same product (because `currentBags` is already decremented by the prior dispatch; those bags are logically restored before re-dispatching). `wouldGoNegative` and `canSubmit` gate the submit button.
+2. **Store** — `record()` and `editEntry()` each re-check stock via `inv.getProduct(id)` and return early if the guard fails, as a safety net against race conditions or direct store calls. Use `inv.getProduct(id)` (not `inv.products.find()`) — the selector is already exposed by `inventoryStore`.
+
+`editEntry` reconciles stock automatically: same-product edits apply the delta (`decrementStock` or `restoreStock`); product-switch edits restore the old product and decrement the new one.
 
 ### Production rule
-`inventoryStore.updateStock` only ever writes the entry whose `date === todayISO()`. Past `stockHistory` rows are immutable through the UI — there is no "edit a past production day" API. If you need to backfill, add a fresh helper rather than mutating history in place (downstream openings rely on history being append-only).
+`inventoryStore.updateStock` accepts an optional `date` field (YYYY-MM-DD, defaults to today):
+- **Today** (default): sets `product.currentBags = closingBags` and writes the Supabase `products` row. `openingBags` is taken from `product.currentBags` (or from the existing today entry if re-updating).
+- **Past date**: upserts only the `stock_history` row. `currentBags` is **not** changed — the physical stock level is unaffected. `openingBags` is taken from the existing history entry if one exists, otherwise `0`.
+
+The `stock-update/[productId]` modal exposes this via `InlineDatePicker` (max = today). Selecting a past date with an existing entry auto-fills the form. Monthly production totals in the production screen and reports already aggregate all `stockHistory` entries filtered by date range, so backdated entries appear automatically.
 
 `inventoryStore.addProduct` accepts an optional `entryDate` (defaults to `todayISO()`). The "Add Product" sheet exposes a **Start Date** picker so opening stock can be backdated to the actual first production day.
 

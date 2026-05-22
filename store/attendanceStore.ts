@@ -1,13 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { AttendanceStatus, AttendanceRecord } from '@/types';
+import type { AttendanceStatus, AttendanceRecord, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
 
-// Sync state per record key "date:employeeId"
-export type SyncStatus = 'synced' | 'syncing' | 'error';
+export type { SyncStatus };
 
 interface AttendanceState {
   records: Record<string, Record<string, AttendanceRecord>>;

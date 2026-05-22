@@ -1,9 +1,8 @@
-import { useState } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, Animated, Easing } from 'react-native';
 import { InlineDatePicker } from '@/components/InlineDatePicker';
 import { useRouter } from 'expo-router';
 import { TopBar } from '@/components/TopBar';
-import { Card } from '@/components/ui/Card';
 import { PolymerBadge } from '@/components/PolymerBadge';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { TextField } from '@/components/TextField';
@@ -15,13 +14,15 @@ import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { relativeTime, formatDateReadable, todayISO } from '@/lib/date';
 import { currentMonthKey, shiftMonthKey, monthLabel, daysOfMonth } from '@/lib/salary';
+import { bagsToKg } from '@/lib/units';
 import { generateId } from '@/lib/utils';
 import type { PolymerType, Product } from '@/types';
 import { Plus, ChevronRight, ChevronLeft, Package, Archive, RefreshCw } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
-import { useEffect, useRef } from 'react';
 
 const POLYMER_OPTIONS: PolymerType[] = ['HDPE', 'PP', 'LDPE'];
+const POLYMER_FILTERS = ['All', ...POLYMER_OPTIONS] as ReadonlyArray<'All' | PolymerType>;
+type PolymerFilter = 'All' | PolymerType;
 
 function TotalCard({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
@@ -63,286 +64,163 @@ function TotalCard({ label, value, sub }: { label: string; value: string; sub: s
   );
 }
 
-function StatBox({
-  label,
-  value,
-  highlight,
-  color = COLORS.textPrimary,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-  color?: string;
-}) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: highlight ? COLORS.accentSoftBg : COLORS.bgTertiary,
-        borderWidth: 1,
-        borderColor: highlight ? COLORS.accentSoftBorder : COLORS.borderColor,
-        borderRadius: 10,
-        padding: 10,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: FONTS.sansBold,
-          fontSize: 10,
-          color: COLORS.textTertiary,
-          letterSpacing: 1,
-          textTransform: 'uppercase',
-        }}
-      >
-        {label}
-      </Text>
-      <Text
-        style={{
-          fontFamily: FONTS.sansBold,
-          fontSize: 16,
-          color,
-          marginTop: 2,
-        }}
-      >
-        {value}
-        <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 11, color: COLORS.textTertiary }}>
-          {' '}
-          bags
-        </Text>
-      </Text>
-    </View>
-  );
+function deltaColor(n: number): string {
+  if (n > 0) return COLORS.success;
+  if (n < 0) return COLORS.error;
+  return COLORS.textTertiary;
 }
 
-function ProductCard({
+const CompactProductRow = React.memo(function CompactProductRow({
   product,
-  monthKey,
+  monthStart,
+  monthEnd,
   onTap,
   onUpdate,
   onRetire,
 }: {
   product: Product;
-  monthKey: string;
+  monthStart: string;
+  monthEnd: string;
   onTap: () => void;
   onUpdate: () => void;
   onRetire?: () => void;
 }) {
-  const today = todayISO();
-  const isCurrentMonth = monthKey === currentMonthKey();
-
-  // Monthly aggregates: sum all stock entries that fall within the month
-  const days = daysOfMonth(monthKey);
-  const monthStart = days[0];
-  const monthEnd = days[days.length - 1];
   const monthEntries = product.stockHistory.filter(
     (e) => e.date >= monthStart && e.date <= monthEnd
   );
   const monthProduced = monthEntries.reduce((s, e) => s + (e.closingBags - e.openingBags), 0);
-  const hasMonthEntries = monthEntries.length > 0;
-
-  // For current month: also show today's entry if available
-  const histEntry = isCurrentMonth ? product.stockHistory.find((e) => e.date === today) : null;
-  const delta = histEntry ? histEntry.closingBags - histEntry.openingBags : null;
+  const hasMonthData = monthEntries.length > 0;
 
   return (
-    <View style={{ marginBottom: 14 }}>
-      <Card pressable onPress={onTap} padding={16} radius={16}>
-        <View
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 12,
-          }}
-        >
-          <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-            <Text
-              style={{
-                fontFamily: 'ui-monospace',
-                fontSize: 13,
-                fontWeight: '700',
-                color: COLORS.accent,
-                letterSpacing: 0.4,
-              }}
-            >
-              {product.code}
-            </Text>
-            <Text
-              style={{
-                fontFamily: FONTS.sansBold,
-                fontSize: 15,
-                color: COLORS.textPrimary,
-                marginTop: 2,
-              }}
-            >
-              {product.name}
-            </Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <PolymerBadge type={product.polymer} />
-            <ChevronRight size={18} color={COLORS.textTertiary} />
-          </View>
-        </View>
+    <Pressable
+      onPress={onTap}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: pressed ? COLORS.bgTertiary : COLORS.bgSecondary,
+        borderWidth: 1,
+        borderColor: COLORS.borderColor,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
+        marginBottom: 8,
+        gap: 12,
+      })}
+    >
+      <PolymerBadge type={product.polymer} />
 
-        <View
-          style={{
-            backgroundColor: COLORS.bgTertiary,
-            borderRadius: 12,
-            padding: 14,
-            marginBottom: 12,
-          }}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{ fontFamily: FONTS.sansSemibold, fontSize: 14, color: COLORS.textPrimary }}
+          numberOfLines={1}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-            <Text
-              style={{
-                fontFamily: FONTS.sansExtraBold,
-                fontSize: 28,
-                color: COLORS.textPrimary,
-                letterSpacing: -0.8,
-              }}
-            >
-              {product.currentBags}
-            </Text>
-            <Text
-              style={{
-                fontFamily: FONTS.sansSemibold,
-                fontSize: 14,
-                color: COLORS.textSecondary,
-              }}
-            >
-              bags
-            </Text>
-            <Text
-              style={{
-                fontFamily: FONTS.sansMedium,
-                fontSize: 13,
-                color: COLORS.textTertiary,
-                marginLeft: 'auto',
-              }}
-            >
-              {(product.currentBags * 25).toLocaleString('en-IN')} kg
-            </Text>
-          </View>
+          {product.name}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 }}>
           <Text
             style={{
-              fontFamily: FONTS.sansMedium,
+              fontFamily: FONTS.mono,
               fontSize: 11,
-              color: COLORS.textTertiary,
-              marginTop: 4,
+              fontWeight: '700',
+              color: COLORS.accent,
+              letterSpacing: 0.3,
             }}
           >
-            Current stock · 1 bag = 25 kg
+            {product.code}
           </Text>
+          {hasMonthData && (
+            <>
+              <Text style={{ color: COLORS.borderStrong, fontSize: 10 }}>·</Text>
+              <Text
+                style={{
+                  fontFamily: FONTS.sansMedium,
+                  fontSize: 11,
+                  color: deltaColor(monthProduced),
+                }}
+              >
+                {monthProduced >= 0 ? `+${monthProduced}` : monthProduced} bags
+              </Text>
+            </>
+          )}
         </View>
-
-        {hasMonthEntries ? (
-          <View style={{ marginBottom: 12 }}>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
-              <StatBox
-                label="Month Produced"
-                value={`${monthProduced >= 0 ? '+' : ''}${monthProduced}`}
-                highlight={monthProduced > 0}
-                color={monthProduced === 0 ? COLORS.textSecondary : monthProduced > 0 ? COLORS.accent : COLORS.error}
-              />
-              <StatBox
-                label="Entries"
-                value={`${monthEntries.length}`}
-                color={COLORS.textSecondary}
-              />
-            </View>
-            {isCurrentMonth && histEntry && (
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <StatBox label="Today Open" value={`${histEntry.openingBags}`} />
-                <StatBox label="Today Close" value={`${histEntry.closingBags}`} />
-                <StatBox
-                  label="Today +"
-                  value={`${(delta ?? 0) >= 0 ? '+' : ''}${delta}`}
-                  highlight={!!delta && delta > 0}
-                  color={!delta ? COLORS.textSecondary : delta > 0 ? COLORS.accent : COLORS.error}
-                />
-              </View>
-            )}
-          </View>
-        ) : (
-          <View
-            style={{
-              backgroundColor: COLORS.bgTertiary,
-              borderRadius: 10,
-              paddingVertical: 8,
-              paddingHorizontal: 12,
-              marginBottom: 12,
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: FONTS.sansMedium,
-                fontSize: 12,
-                color: COLORS.textTertiary,
-              }}
-            >
-              {isCurrentMonth ? 'No entry for today yet' : `No entries for ${monthLabel(monthKey)}`}
-            </Text>
-          </View>
-        )}
-
-        <View
+        <Text
           style={{
-            flexDirection: 'row',
+            fontFamily: FONTS.sansMedium,
+            fontSize: 10,
+            color: COLORS.textTertiary,
+            marginTop: 2,
+          }}
+        >
+          {relativeTime(product.lastUpdated)}
+        </Text>
+      </View>
+
+      <View style={{ alignItems: 'flex-end', gap: 1, marginRight: 4 }}>
+        <Text
+          style={{
+            fontFamily: FONTS.sansExtraBold,
+            fontSize: 20,
+            color: COLORS.textPrimary,
+            letterSpacing: -0.5,
+          }}
+        >
+          {product.currentBags}
+        </Text>
+        <Text
+          style={{
+            fontFamily: FONTS.sansMedium,
+            fontSize: 9,
+            color: COLORS.textTertiary,
+            textTransform: 'uppercase',
+            letterSpacing: 0.8,
+          }}
+        >
+          bags
+        </Text>
+      </View>
+
+      {/* stopPropagation prevents the outer row's onTap from also firing on web */}
+      <Pressable
+        onPress={(e) => { e.stopPropagation(); onUpdate(); }}
+        hitSlop={8}
+        style={({ pressed }) => ({
+          width: 34,
+          height: 34,
+          borderRadius: 17,
+          backgroundColor: pressed ? COLORS.accentPressed : COLORS.accent,
+          alignItems: 'center',
+          justifyContent: 'center',
+          shadowColor: COLORS.accent,
+          shadowOpacity: 0.28,
+          shadowRadius: 6,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 3,
+        })}
+      >
+        <Plus size={16} color="#fff" />
+      </Pressable>
+
+      {onRetire && (
+        <Pressable
+          onPress={(e) => { e.stopPropagation(); onRetire(); }}
+          hitSlop={8}
+          style={({ pressed }) => ({
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            backgroundColor: pressed ? COLORS.bgTertiary : 'transparent',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 12,
-          }}
+            justifyContent: 'center',
+          })}
         >
-          <Text
-            style={{
-              fontFamily: FONTS.sansMedium,
-              fontSize: 11,
-              color: COLORS.textTertiary,
-            }}
-          >
-            Last updated {relativeTime(product.lastUpdated)}
-          </Text>
-          <Text
-            style={{
-              fontFamily: FONTS.sansSemibold,
-              fontSize: 11,
-              color: COLORS.textTertiary,
-            }}
-          >
-            {product.stockHistory.length} entries
-          </Text>
-        </View>
+          <Archive size={14} color={COLORS.textTertiary} />
+        </Pressable>
+      )}
 
-        <PrimaryButton
-          label="Update Stock"
-          onPress={onUpdate}
-          icon={<Plus size={16} color="#fff" />}
-        />
-        {onRetire && (
-          <Pressable
-            onPress={onRetire}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              marginTop: 8,
-              paddingVertical: 8,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: COLORS.borderColor,
-            }}
-          >
-            <Archive size={13} color={COLORS.textTertiary} />
-            <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansBold, fontSize: 12 }}>
-              Retire Product
-            </Text>
-          </Pressable>
-        )}
-      </Card>
-    </View>
+      <ChevronRight size={16} color={COLORS.borderStrong} />
+    </Pressable>
   );
-}
+});
 
 function RetiredSection({
   products,
@@ -493,9 +371,7 @@ function RetiredSection({
                 }}
               >
                 <Archive size={12} color={COLORS.accent} />
-                <Text
-                  style={{ color: COLORS.accent, fontFamily: FONTS.sansBold, fontSize: 11 }}
-                >
+                <Text style={{ color: COLORS.accent, fontFamily: FONTS.sansBold, fontSize: 11 }}>
                   Unretire
                 </Text>
               </Pressable>
@@ -528,11 +404,34 @@ export default function ProductionScreen() {
   const [unretireTarget, setUnretireTarget] = useState<Product | null>(null);
   const [reportMonth, setReportMonth] = useState(currentMonthKey());
   const [refreshing, setRefreshing] = useState(false);
+  const [polymerFilter, setPolymerFilter] = useState<PolymerFilter>('All');
 
   const today = todayISO();
-  const active = products.filter((p) => p.active !== false);
-  const retired = products.filter((p) => p.active === false);
-  const totalStock = products.reduce((s, p) => s + p.currentBags, 0);
+
+  const { active, retired, filteredActive, totalStock, polymerCounts } = useMemo(() => {
+    const active: Product[] = [];
+    const retired: Product[] = [];
+    let totalStock = 0;
+    const polymerCounts: Record<string, number> = {};
+    for (const p of products) {
+      totalStock += p.currentBags;
+      if (p.active !== false) {
+        active.push(p);
+        polymerCounts[p.polymer] = (polymerCounts[p.polymer] ?? 0) + 1;
+      } else {
+        retired.push(p);
+      }
+    }
+    active.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
+    const filteredActive =
+      polymerFilter === 'All' ? active : active.filter((p) => p.polymer === polymerFilter);
+    return { active, retired, filteredActive, totalStock, polymerCounts };
+  }, [products, polymerFilter]);
+
+  const { monthStart, monthEnd } = useMemo(() => {
+    const days = daysOfMonth(reportMonth);
+    return { monthStart: days[0], monthEnd: days[days.length - 1] };
+  }, [reportMonth]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -595,12 +494,11 @@ export default function ProductionScreen() {
           <TotalCard label="Total Stock" value={String(totalStock)} sub="bags" />
           <TotalCard
             label="Approx Weight"
-            value={((totalStock * 25) / 1000).toFixed(1)}
+            value={(bagsToKg(totalStock) / 1000).toFixed(1)}
             sub="tonnes"
           />
         </View>
 
-        {/* Month stepper + refresh */}
         <View
           style={{
             flexDirection: 'row',
@@ -610,7 +508,7 @@ export default function ProductionScreen() {
             borderColor: COLORS.borderColor,
             borderRadius: 12,
             padding: 10,
-            marginBottom: 16,
+            marginBottom: 14,
           }}
         >
           <Pressable
@@ -646,7 +544,12 @@ export default function ProductionScreen() {
           <Pressable
             onPress={() => setReportMonth(shiftMonthKey(reportMonth, 1))}
             hitSlop={10}
-            style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary, marginRight: 8 }}
+            style={{
+              padding: 6,
+              borderRadius: 8,
+              backgroundColor: COLORS.bgTertiary,
+              marginRight: 8,
+            }}
           >
             <ChevronRight size={16} color={COLORS.textSecondary} />
           </Pressable>
@@ -664,6 +567,58 @@ export default function ProductionScreen() {
             <RefreshCw size={16} color={refreshing ? COLORS.accent : COLORS.textSecondary} />
           </Pressable>
         </View>
+
+        {active.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: 12 }}
+            contentContainerStyle={{ gap: 8, paddingRight: 4 }}
+          >
+            {POLYMER_FILTERS.map((f) => {
+              const sel = polymerFilter === f;
+              const count = f === 'All' ? active.length : (polymerCounts[f] ?? 0);
+              if (f !== 'All' && count === 0) return null;
+              return (
+                <Pressable
+                  key={f}
+                  onPress={() => setPolymerFilter(f)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    paddingHorizontal: 14,
+                    paddingVertical: 7,
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: sel ? COLORS.accent : COLORS.borderColor,
+                    backgroundColor: sel ? COLORS.accentSoftBg : COLORS.bgSecondary,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 12,
+                      color: sel ? COLORS.accent : COLORS.textSecondary,
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    {f}
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 11,
+                      color: sel ? COLORS.accent : COLORS.textTertiary,
+                    }}
+                  >
+                    {count}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {active.length === 0 && retired.length === 0 && (
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -691,11 +646,26 @@ export default function ProductionScreen() {
           </View>
         )}
 
-        {active.map((p) => (
-          <ProductCard
+        {filteredActive.length === 0 && active.length > 0 && (
+          <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+            <Text
+              style={{
+                fontFamily: FONTS.sansMedium,
+                fontSize: 13,
+                color: COLORS.textTertiary,
+              }}
+            >
+              No {polymerFilter} products
+            </Text>
+          </View>
+        )}
+
+        {filteredActive.map((p) => (
+          <CompactProductRow
             key={p.id}
             product={p}
-            monthKey={reportMonth}
+            monthStart={monthStart}
+            monthEnd={monthEnd}
             onTap={() => router.push(`/product-detail/${p.id}`)}
             onUpdate={() => router.push(`/stock-update/${p.id}`)}
             onRetire={role === 'admin' ? () => setRetireTarget(p) : undefined}
@@ -706,7 +676,11 @@ export default function ProductionScreen() {
           <RetiredSection
             products={retired}
             onTap={(id) => router.push(`/product-detail/${id}`)}
-            onUnretire={role === 'admin' ? (id) => setUnretireTarget(products.find((p) => p.id === id) ?? null) : undefined}
+            onUnretire={
+              role === 'admin'
+                ? (id) => setUnretireTarget(products.find((p) => p.id === id) ?? null)
+                : undefined
+            }
           />
         )}
       </ScrollView>

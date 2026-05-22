@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { DispatchEntry } from '@/types';
+import type { DispatchEntry, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
 import { useInventoryStore } from './inventoryStore';
 import { supabase } from '@/lib/supabase';
 
-export type SyncStatus = 'synced' | 'syncing' | 'error';
+export type { SyncStatus };
 
 interface DispatchState {
   entries: DispatchEntry[];
@@ -18,7 +18,6 @@ interface DispatchState {
   getTodayEntries: () => DispatchEntry[];
   getEntriesForDate: (date: string) => DispatchEntry[];
   getDispatchesByProduct: (productId: string) => DispatchEntry[];
-  getSyncStatus: (id: string) => SyncStatus;
   retrySync: (id: string) => void;
 }
 
@@ -64,11 +63,15 @@ export const useDispatchStore = create<DispatchState>()(
       },
 
       record: (entry) => {
+        const inv = useInventoryStore.getState();
+        const product = inv.getProduct(entry.productId);
+        if (!product || product.currentBags < entry.bags) return;
+
         set((state) => ({
           entries: [...state.entries, entry],
           syncStatus: { ...state.syncStatus, [entry.id]: 'syncing' },
         }));
-        useInventoryStore.getState().decrementStock(entry.productId, entry.bags);
+        inv.decrementStock(entry.productId, entry.bags);
 
         supabase
           .from('dispatch_entries')
@@ -85,14 +88,24 @@ export const useDispatchStore = create<DispatchState>()(
         if (!prev) return;
         const updated = { ...prev, ...patch };
 
+        const newProductId = patch.productId ?? prev.productId;
+        const newBags = patch.bags ?? prev.bags;
+        const inv = useInventoryStore.getState();
+
+        // currentBags is already decremented by prev.bags, so effective ceiling = currentBags + prev.bags
+        if (newProductId === prev.productId) {
+          const availableStock = (inv.getProduct(prev.productId)?.currentBags ?? 0) + prev.bags;
+          if (newBags > availableStock) return;
+        } else {
+          const availableStock = inv.getProduct(newProductId)?.currentBags ?? 0;
+          if (newBags > availableStock) return;
+        }
+
         set((state) => ({
           entries: state.entries.map((e) => (e.id === id ? updated : e)),
           syncStatus: { ...state.syncStatus, [id]: 'syncing' },
         }));
 
-        const newProductId = patch.productId ?? prev.productId;
-        const newBags = patch.bags ?? prev.bags;
-        const inv = useInventoryStore.getState();
         if (newProductId === prev.productId) {
           const delta = newBags - prev.bags;
           if (delta > 0) inv.decrementStock(prev.productId, delta);
@@ -141,11 +154,10 @@ export const useDispatchStore = create<DispatchState>()(
       getDispatchesByProduct: (productId) =>
         get().entries.filter((e) => e.productId === productId),
 
-      getSyncStatus: (id) => get().syncStatus[id] ?? 'synced',
-
       retrySync: (id) => {
-        const entry = get().entries.find((e) => e.id === id);
-        if (!entry || get().syncStatus[id] !== 'error') return;
+        const { entries, syncStatus } = get();
+        const entry = entries.find((e) => e.id === id);
+        if (!entry || syncStatus[id] !== 'error') return;
 
         set((state) => ({
           syncStatus: { ...state.syncStatus, [id]: 'syncing' },

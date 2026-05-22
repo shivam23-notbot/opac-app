@@ -14,6 +14,7 @@ import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { todayISO, formatDateReadable } from '@/lib/date';
 import { generateId } from '@/lib/utils';
+import { bagsToKg } from '@/lib/units';
 import type { DispatchEntry } from '@/types';
 import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight, WifiOff } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
@@ -28,13 +29,15 @@ function offsetDate(base: string, days: number): string {
 export default function DispatchScreen() {
   const allProducts = useInventoryStore((s) => s.products);
   const products = allProducts.filter((p) => p.currentBags > 0);
+  const allEntries = useDispatchStore((s) => s.entries);
   const record = useDispatchStore((s) => s.record);
   const editEntry = useDispatchStore((s) => s.editEntry);
   const deleteEntry = useDispatchStore((s) => s.deleteEntry);
   const getEntriesForDate = useDispatchStore((s) => s.getEntriesForDate);
   const getSyncStatus = useDispatchStore((s) => s.getSyncStatus);
   const retrySync = useDispatchStore((s) => s.retrySync);
-  // Subscribe to syncStatus so cards re-render when sync state changes
+  // Async callbacks only mutate syncStatus (not entries), so this bare selector is needed
+  // to re-render the spinner/error icons when a network round-trip completes.
   useDispatchStore((s) => s.syncStatus);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
@@ -51,9 +54,15 @@ export default function DispatchScreen() {
   const [deleteTarget, setDeleteTarget] = useState<DispatchEntry | null>(null);
 
   const selectedProduct = allProducts.find((p) => p.id === selectedProductId);
+  const editingEntry = editingId ? allEntries.find((e) => e.id === editingId) : null;
+  // When editing, the original bags for this product are logically "restored" before re-dispatching,
+  // so the effective available is currentBags + originalBags (same product) or just currentBags (product switch).
+  const editRestoreBags =
+    editingEntry && editingEntry.productId === selectedProductId ? editingEntry.bags : 0;
+  const effectiveAvailable = selectedProduct ? selectedProduct.currentBags + editRestoreBags : 0;
   const bagsNum = parseInt(bags) || 0;
-  const remaining = selectedProduct ? selectedProduct.currentBags - bagsNum : 0;
-  const wouldGoNegative = selectedProduct !== undefined && bagsNum > selectedProduct.currentBags;
+  const remaining = effectiveAvailable - bagsNum;
+  const wouldGoNegative = selectedProduct !== undefined && bagsNum > effectiveAvailable;
   const canSubmit =
     selectedProduct &&
     bags.trim() !== '' &&
@@ -248,6 +257,12 @@ export default function DispatchScreen() {
             <View style={{ flexDirection: 'row', gap: 10 }}>
               {products.map((p) => {
                 const sel = selectedProductId === p.id;
+                // In edit mode the original bags for the edited product are logically restored,
+                // so show the true ceiling rather than the already-decremented currentBags.
+                const chipAvailable =
+                  editingEntry && editingEntry.productId === p.id
+                    ? p.currentBags + editingEntry.bags
+                    : p.currentBags;
                 return (
                   <Pressable
                     key={p.id}
@@ -296,7 +311,7 @@ export default function DispatchScreen() {
                         color: COLORS.textSecondary,
                       }}
                     >
-                      {p.currentBags} bags
+                      {chipAvailable} bags
                     </Text>
                   </Pressable>
                 );
@@ -329,7 +344,7 @@ export default function DispatchScreen() {
                     fontSize: 13,
                   }}
                 >
-                  Stock: {selectedProduct.currentBags} bags
+                  Available: {effectiveAvailable} bags
                 </Text>
                 <Text
                   style={{
@@ -339,7 +354,7 @@ export default function DispatchScreen() {
                     marginLeft: 'auto',
                   }}
                 >
-                  ({(selectedProduct.currentBags * 25).toLocaleString('en-IN')} kg)
+                  ({bagsToKg(effectiveAvailable).toLocaleString('en-IN')} kg)
                 </Text>
               </View>
 
@@ -371,8 +386,8 @@ export default function DispatchScreen() {
                     }}
                   >
                     {wouldGoNegative
-                      ? `⚠ Exceeds current stock by ${bagsNum - selectedProduct.currentBags} bags`
-                      : `Remaining: ${remaining} bags (${remaining * 25} kg)`}
+                      ? `⚠ Exceeds available stock by ${bagsNum - effectiveAvailable} bags`
+                      : `Remaining: ${remaining} bags (${bagsToKg(remaining).toLocaleString('en-IN')} kg)`}
                   </Text>
                 </View>
               )}
