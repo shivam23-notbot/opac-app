@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { TopBar } from '@/components/TopBar';
 import { Card } from '@/components/ui/Card';
 import { TextField } from '@/components/TextField';
@@ -15,7 +15,7 @@ import { useUiStore } from '@/store/uiStore';
 import { todayISO, formatDateReadable } from '@/lib/date';
 import { generateId } from '@/lib/utils';
 import type { DispatchEntry } from '@/types';
-import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight, WifiOff } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 
@@ -32,6 +32,10 @@ export default function DispatchScreen() {
   const editEntry = useDispatchStore((s) => s.editEntry);
   const deleteEntry = useDispatchStore((s) => s.deleteEntry);
   const getEntriesForDate = useDispatchStore((s) => s.getEntriesForDate);
+  const getSyncStatus = useDispatchStore((s) => s.getSyncStatus);
+  const retrySync = useDispatchStore((s) => s.retrySync);
+  // Subscribe to syncStatus so cards re-render when sync state changes
+  useDispatchStore((s) => s.syncStatus);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
   const logAudit = useAuditStore((s) => s.log);
@@ -415,7 +419,9 @@ export default function DispatchScreen() {
               message="No dispatches recorded for this date"
             />
           ) : (
-            dateEntries.map((entry) => (
+            dateEntries.map((entry) => {
+              const entrySyncStatus = getSyncStatus(entry.id);
+              return (
               <View key={entry.id} style={{ marginBottom: 10 }}>
                 <Card padding={14} radius={14}>
                   <View
@@ -478,6 +484,7 @@ export default function DispatchScreen() {
                           flexDirection: 'row',
                           gap: 10,
                           marginTop: 4,
+                          alignItems: 'center',
                         }}
                       >
                         <Text
@@ -500,9 +507,24 @@ export default function DispatchScreen() {
                             · {entry.vehicleNumber}
                           </Text>
                         )}
+                        {entrySyncStatus === 'syncing' && (
+                          <ActivityIndicator size="small" color={COLORS.textTertiary} />
+                        )}
+                        {entrySyncStatus === 'error' && (
+                          <Pressable
+                            onPress={() => retrySync(entry.id)}
+                            hitSlop={8}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}
+                          >
+                            <WifiOff size={12} color={COLORS.error} />
+                            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 11, color: COLORS.error }}>
+                              Upload failed · tap to retry
+                            </Text>
+                          </Pressable>
+                        )}
                       </View>
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <Pressable
                         onPress={() => handleEdit(entry)}
                         hitSlop={10}
@@ -531,7 +553,8 @@ export default function DispatchScreen() {
                   </View>
                 </Card>
               </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       </KeyboardAvoidingView>
