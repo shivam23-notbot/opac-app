@@ -12,7 +12,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useUsersStore } from '@/store/usersStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
-import { todayISO, formatDateReadable } from '@/lib/date';
+import { todayISO, formatDateReadable, shiftDate } from '@/lib/date';
 import type { AttendanceStatus } from '@/types';
 import { computeMonthlySalary, shiftMonthKey, currentMonthKey } from '@/lib/salary';
 import {
@@ -30,11 +30,6 @@ import {
 import * as Haptics from 'expo-haptics';
 import { COLORS, FONTS } from '@/constants';
 
-function offsetDate(base: string, days: number): string {
-  const [y, m, day] = base.split('-').map(Number);
-  const d = new Date(y, m - 1, day + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function statusLabel(status: AttendanceStatus | undefined, night?: boolean, overtimeHours?: number): string {
   if (!status) return night ? 'Night' : '';
@@ -343,7 +338,7 @@ export default function AttendanceScreen() {
         }}
       >
         <Pressable
-          onPress={() => setSelectedDate(offsetDate(selectedDate, -1))}
+          onPress={() => setSelectedDate(shiftDate(selectedDate, -1))}
           hitSlop={12}
           style={{ padding: 6 }}
         >
@@ -360,7 +355,7 @@ export default function AttendanceScreen() {
         </Text>
         <Pressable
           onPress={() => {
-            if (selectedDate < todayISO()) setSelectedDate(offsetDate(selectedDate, 1));
+            if (selectedDate < todayISO()) setSelectedDate(shiftDate(selectedDate, 1));
           }}
           hitSlop={12}
           style={{ padding: 6, opacity: selectedDate >= todayISO() ? 0.3 : 1 }}

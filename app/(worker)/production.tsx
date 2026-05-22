@@ -782,7 +782,7 @@ export default function ProductionScreen() {
           keyboardType="numeric"
           placeholder="0"
           suffix="bags"
-          hint={newBags ? `= ${(parseInt(newBags) || 0) * 25} kg` : '1 bag = 25 kg'}
+          hint={newBags ? `= ${bagsToKg(parseInt(newBags) || 0)} kg` : '1 bag = 25 kg'}
         />
 
         <InlineDatePicker

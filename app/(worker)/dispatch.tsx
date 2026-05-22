@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { TopBar } from '@/components/TopBar';
 import { Card } from '@/components/ui/Card';
 import { TextField } from '@/components/TextField';
@@ -7,24 +7,19 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { EmptyState } from '@/components/EmptyState';
 import { PolymerBadge } from '@/components/PolymerBadge';
 import { SectionLabel } from '@/components/SectionLabel';
+import { SyncIndicator } from '@/components/SyncIndicator';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useDispatchStore } from '@/store/dispatchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
-import { todayISO, formatDateReadable } from '@/lib/date';
+import { todayISO, formatDateReadable, shiftDate } from '@/lib/date';
 import { generateId } from '@/lib/utils';
 import { bagsToKg } from '@/lib/units';
 import type { DispatchEntry } from '@/types';
-import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight, WifiOff } from 'lucide-react-native';
+import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-
-function offsetDate(base: string, days: number): string {
-  const [y, m, d] = base.split('-').map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
 
 export default function DispatchScreen() {
   const allProducts = useInventoryStore((s) => s.products);
@@ -34,11 +29,8 @@ export default function DispatchScreen() {
   const editEntry = useDispatchStore((s) => s.editEntry);
   const deleteEntry = useDispatchStore((s) => s.deleteEntry);
   const getEntriesForDate = useDispatchStore((s) => s.getEntriesForDate);
-  const getSyncStatus = useDispatchStore((s) => s.getSyncStatus);
+  const syncStatus = useDispatchStore((s) => s.syncStatus);
   const retrySync = useDispatchStore((s) => s.retrySync);
-  // Async callbacks only mutate syncStatus (not entries), so this bare selector is needed
-  // to re-render the spinner/error icons when a network round-trip completes.
-  useDispatchStore((s) => s.syncStatus);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
   const logAudit = useAuditStore((s) => s.log);
@@ -163,7 +155,7 @@ export default function DispatchScreen() {
       >
         <Pressable
           onPress={() => {
-            setSelectedDate(offsetDate(selectedDate, -1));
+            setSelectedDate(shiftDate(selectedDate, -1));
             resetForm();
             setSelectedProductId(null);
           }}
@@ -184,7 +176,7 @@ export default function DispatchScreen() {
         <Pressable
           onPress={() => {
             if (selectedDate < todayISO()) {
-              setSelectedDate(offsetDate(selectedDate, 1));
+              setSelectedDate(shiftDate(selectedDate, 1));
               resetForm();
               setSelectedProductId(null);
             }
@@ -435,7 +427,7 @@ export default function DispatchScreen() {
             />
           ) : (
             dateEntries.map((entry) => {
-              const entrySyncStatus = getSyncStatus(entry.id);
+              const entrySyncStatus = syncStatus[entry.id] ?? 'synced';
               return (
               <View key={entry.id} style={{ marginBottom: 10 }}>
                 <Card padding={14} radius={14}>
@@ -522,21 +514,10 @@ export default function DispatchScreen() {
                             · {entry.vehicleNumber}
                           </Text>
                         )}
-                        {entrySyncStatus === 'syncing' && (
-                          <ActivityIndicator size="small" color={COLORS.textTertiary} />
-                        )}
-                        {entrySyncStatus === 'error' && (
-                          <Pressable
-                            onPress={() => retrySync(entry.id)}
-                            hitSlop={8}
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}
-                          >
-                            <WifiOff size={12} color={COLORS.error} />
-                            <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 11, color: COLORS.error }}>
-                              Upload failed · tap to retry
-                            </Text>
-                          </Pressable>
-                        )}
+                        <SyncIndicator
+                          status={entrySyncStatus}
+                          onRetry={() => retrySync(entry.id)}
+                        />
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

@@ -1310,83 +1310,16 @@ export default function ReportsScreen() {
 
       {activeTab === 'production' && !isMobile && (
         <View>
-          {/* Month stepper + PDF button */}
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: COLORS.bgSecondary,
-              borderWidth: 1,
-              borderColor: COLORS.borderColor,
-              borderRadius: 12,
-              padding: 10,
-              marginBottom: 12,
-              gap: 8,
+          <ProductionMonthStepper
+            month={productionMonth}
+            isMobile={false}
+            onPrev={() => setProductionMonth(shiftMonthKey(productionMonth, -1))}
+            onNext={() => {
+              const next = shiftMonthKey(productionMonth, 1);
+              if (next <= currentMonthKey()) setProductionMonth(next);
             }}
-          >
-            <Pressable
-              onPress={() => setProductionMonth(shiftMonthKey(productionMonth, -1))}
-              hitSlop={10}
-              style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary }}
-            >
-              <ChevronLeft size={16} color={COLORS.textSecondary} />
-            </Pressable>
-            <View style={{ alignItems: 'center', flex: 1 }}>
-              <Text
-                style={{
-                  color: COLORS.textTertiary,
-                  fontFamily: FONTS.sansBold,
-                  fontSize: 10,
-                  letterSpacing: 1.5,
-                  textTransform: 'uppercase',
-                }}
-              >
-                PDF month
-              </Text>
-              <Text
-                style={{
-                  color: COLORS.textPrimary,
-                  fontFamily: FONTS.sansExtraBold,
-                  fontSize: 15,
-                  marginTop: 2,
-                }}
-              >
-                {monthLabel(productionMonth)}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => {
-                const next = shiftMonthKey(productionMonth, 1);
-                if (next <= currentMonthKey()) setProductionMonth(next);
-              }}
-              hitSlop={10}
-              style={{
-                padding: 6,
-                borderRadius: 8,
-                backgroundColor: COLORS.bgTertiary,
-                opacity: productionMonth >= currentMonthKey() ? 0.35 : 1,
-              }}
-            >
-              <ChevronRight size={16} color={COLORS.textSecondary} />
-            </Pressable>
-            <Pressable
-              onPress={saveProductionReport}
-              style={{
-                backgroundColor: COLORS.accent,
-                paddingHorizontal: 16,
-                paddingVertical: 9,
-                borderRadius: 10,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <FileText size={14} color="#fff" />
-              <Text style={{ color: '#fff', fontFamily: FONTS.sansBold, fontSize: 12 }}>
-                Save PDF ({monthLabel(productionMonth)})
-              </Text>
-            </Pressable>
-          </View>
+            onSave={saveProductionReport}
+          />
 
           {/* Grouped production table */}
           <View
