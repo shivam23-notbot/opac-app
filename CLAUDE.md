@@ -80,11 +80,19 @@ All stores are in `store/`. Each uses `persist` middleware with a unique storage
 `store/useAttendanceStore.ts` is an unused legacy file — do not import from it. The canonical attendance store is `store/attendanceStore.ts`.
 
 ### Attendance sync details
-Each attendance record tracks its own sync state via `syncStatus: Record<"date:employeeId", SyncStatus>` where `SyncStatus = 'synced' | 'syncing' | 'error'`. Use `getSyncStatus(date, employeeId)` to read it in a component; the worker card renders a spinner (syncing) or `<WifiOff>` icon (error) accordingly.
+Each attendance record tracks its own sync state via `syncStatus: Record<"date:employeeId", SyncStatus>`. Use `getSyncStatus(date, employeeId)` to read it in a component; the worker card renders a spinner (syncing) or `<WifiOff>` icon (error) accordingly.
 
 The underlying `upsertRecord` uses **delete-then-insert** rather than Supabase's `upsert`. This is intentional: the RLS `UPDATE WITH CHECK` policy pins a row to its original author (`recorded_by = auth.uid()`), so a second user re-marking attendance would fail on update. Deleting first lets any authenticated user replace the row. Do not revert this to `upsert`.
 
 `retrySync(date, employeeId)` re-runs `upsertRecord` for a specific record that landed in `'error'` state, without touching the rest of the store.
+
+### Dispatch sync details
+Each dispatch entry tracks its own sync state via `dispatchStore.syncStatus: Record<entryId, SyncStatus>`. The pattern mirrors attendanceStore:
+- `record()` and `editEntry()` set `syncStatus[id] = 'syncing'` synchronously, then resolve to `'synced'` or `'error'` in the Supabase `.then()`.
+- `retrySync(id)` uses `upsert` (not delete-then-insert) because dispatch entries are only retried by the user who originally created them, so the RLS UPDATE check passes.
+- `syncStatus` is **not persisted** to AsyncStorage (`partialize` excludes it); on app restart `hydrate()` replaces all entries from Supabase and resets `syncStatus: {}`.
+- Consumers subscribe directly: `const syncStatus = useDispatchStore((s) => s.syncStatus)` and read `syncStatus[entry.id] ?? 'synced'` in the render. There is **no `getSyncStatus` method** on dispatchStore — use the object directly.
+- Use `<SyncIndicator status={...} onRetry={...} />` (`components/SyncIndicator.tsx`) to render the spinner / error + retry label. Pass `onRetry` to show the "Upload failed · tap to retry" text label; omit it for an icon-only error state.
 
 ### Wage history
 `Worker` has a `wageHistory: { wage: number; effectiveFrom: string }[]` field. `updateWorkerWage(id, wage, effectiveFrom)` appends a new entry and re-sorts by date; `worker.dailyWage` always holds the current (latest) wage. The attendance screen shows full wage history by making the worker's name a `<Pressable>` that opens a "Wage Details" bottom sheet — non-admins see read-only history + prior-month salary summary; the update form is admin-only.
@@ -95,9 +103,10 @@ Cross-store coupling lives in store actions (`dispatchStore.record` / `.editEntr
 
 ### Key Types (`types/index.ts`)
 ```ts
-type AttendanceStatus = 'absent' | 'full' | { hours: number };
+type AttendanceStatus = 'absent' | 'full' | 'night' | { hours: number };
+type SyncStatus = 'synced' | 'syncing' | 'error';
 ```
-Central union — always handle all three variants when reading attendance records.
+`AttendanceStatus` is a central union — always handle all three variants when reading attendance records. `SyncStatus` is the canonical sync-state type shared by both `attendanceStore` and `dispatchStore`; both stores re-export it (`export type { SyncStatus }`) so importers can use either path.
 
 ### Salary computation (`lib/salary.ts` — authoritative)
 **Never recompute salary from raw records in a screen.** All salary numbers — on-screen totals, modal detail, PDF — must come from `computeMonthlySalary(worker, monthKey, records, allAdvances)`.
@@ -151,6 +160,7 @@ For `style={}` prop values (not className) use the constants from `constants/ind
 
 ### Shared UI components
 - `components/ConfirmDialog.tsx` — use for every delete / settle / reopen. Render it once at the bottom of the screen, gated on a `*Target` state object that the icon's `onPress` sets. The actual mutation runs in the `onConfirm` callback.
+- `components/SyncIndicator.tsx` — inline sync status indicator. Props: `status: SyncStatus`, `onRetry?: () => void`. Shows a spinner (`syncing`), a tappable WifiOff icon with optional "Upload failed · tap to retry" label (`error`), or nothing (`synced`). Use this in any entry card that tracks a `SyncStatus`.
 - `components/DatePickerModal.tsx` — full-screen modal date picker. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?`, `onConfirm`, `onClose`. Used in `reports.tsx` date-range pickers.
 - `components/InlineDatePicker.tsx` — compact inline date input with `±1 day` buttons and typed entry. Props: `label`, `value`, `onChange`, `maxDate?`. Used inside bottom sheets (Add Worker, Add Product, wage update, advance recording) and the stock-update modal (entry date picker). Prefer this over `DatePickerModal` inside `<BottomSheet>`.
 

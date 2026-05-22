@@ -1381,12 +1381,8 @@ export default function ReportsScreen() {
                   >
                     +{group.totalDelta} total
                   </Text>
-                  <Text
-                    style={{ flex: 1, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 10 }}
-                  />
-                  <Text
-                    style={{ flex: 1, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 10 }}
-                  />
+                  <View style={{ flex: 1 }} />
+                  <View style={{ flex: 1 }} />
                   <Text
                     style={{
                       flex: 1,
@@ -1397,9 +1393,7 @@ export default function ReportsScreen() {
                   >
                     {group.totalKg} kg
                   </Text>
-                  <Text
-                    style={{ flex: 1, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 10 }}
-                  />
+                  <View style={{ flex: 1 }} />
                 </View>
                 {/* Product sub-rows */}
                 {group.rows.map((r, i) => (
@@ -1414,9 +1408,7 @@ export default function ReportsScreen() {
                       borderTopColor: COLORS.borderColor,
                     }}
                   >
-                    <Text
-                      style={{ flex: 1, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 11 }}
-                    />
+                    <View style={{ flex: 1 }} />
                     <Text
                       style={{
                         flex: 1,
