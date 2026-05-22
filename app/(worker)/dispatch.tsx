@@ -7,31 +7,30 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { EmptyState } from '@/components/EmptyState';
 import { PolymerBadge } from '@/components/PolymerBadge';
 import { SectionLabel } from '@/components/SectionLabel';
+import { SyncIndicator } from '@/components/SyncIndicator';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useDispatchStore } from '@/store/dispatchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
-import { todayISO, formatDateReadable } from '@/lib/date';
+import { todayISO, formatDateReadable, shiftDate } from '@/lib/date';
 import { generateId } from '@/lib/utils';
+import { bagsToKg } from '@/lib/units';
 import type { DispatchEntry } from '@/types';
 import { Pencil, Truck, Trash2, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { COLORS, FONTS } from '@/constants';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 
-function offsetDate(base: string, days: number): string {
-  const [y, m, d] = base.split('-').map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 export default function DispatchScreen() {
   const allProducts = useInventoryStore((s) => s.products);
   const products = allProducts.filter((p) => p.currentBags > 0);
+  const allEntries = useDispatchStore((s) => s.entries);
   const record = useDispatchStore((s) => s.record);
   const editEntry = useDispatchStore((s) => s.editEntry);
   const deleteEntry = useDispatchStore((s) => s.deleteEntry);
   const getEntriesForDate = useDispatchStore((s) => s.getEntriesForDate);
+  const syncStatus = useDispatchStore((s) => s.syncStatus);
+  const retrySync = useDispatchStore((s) => s.retrySync);
   const user = useAuthStore((s) => s.user);
   const role = useAuthStore((s) => s.role);
   const logAudit = useAuditStore((s) => s.log);
@@ -47,9 +46,15 @@ export default function DispatchScreen() {
   const [deleteTarget, setDeleteTarget] = useState<DispatchEntry | null>(null);
 
   const selectedProduct = allProducts.find((p) => p.id === selectedProductId);
+  const editingEntry = editingId ? allEntries.find((e) => e.id === editingId) : null;
+  // When editing, the original bags for this product are logically "restored" before re-dispatching,
+  // so the effective available is currentBags + originalBags (same product) or just currentBags (product switch).
+  const editRestoreBags =
+    editingEntry && editingEntry.productId === selectedProductId ? editingEntry.bags : 0;
+  const effectiveAvailable = selectedProduct ? selectedProduct.currentBags + editRestoreBags : 0;
   const bagsNum = parseInt(bags) || 0;
-  const remaining = selectedProduct ? selectedProduct.currentBags - bagsNum : 0;
-  const wouldGoNegative = selectedProduct !== undefined && bagsNum > selectedProduct.currentBags;
+  const remaining = effectiveAvailable - bagsNum;
+  const wouldGoNegative = selectedProduct !== undefined && bagsNum > effectiveAvailable;
   const canSubmit =
     selectedProduct &&
     bags.trim() !== '' &&
@@ -150,7 +155,7 @@ export default function DispatchScreen() {
       >
         <Pressable
           onPress={() => {
-            setSelectedDate(offsetDate(selectedDate, -1));
+            setSelectedDate(shiftDate(selectedDate, -1));
             resetForm();
             setSelectedProductId(null);
           }}
@@ -171,7 +176,7 @@ export default function DispatchScreen() {
         <Pressable
           onPress={() => {
             if (selectedDate < todayISO()) {
-              setSelectedDate(offsetDate(selectedDate, 1));
+              setSelectedDate(shiftDate(selectedDate, 1));
               resetForm();
               setSelectedProductId(null);
             }
@@ -244,6 +249,12 @@ export default function DispatchScreen() {
             <View style={{ flexDirection: 'row', gap: 10 }}>
               {products.map((p) => {
                 const sel = selectedProductId === p.id;
+                // In edit mode the original bags for the edited product are logically restored,
+                // so show the true ceiling rather than the already-decremented currentBags.
+                const chipAvailable =
+                  editingEntry && editingEntry.productId === p.id
+                    ? p.currentBags + editingEntry.bags
+                    : p.currentBags;
                 return (
                   <Pressable
                     key={p.id}
@@ -292,7 +303,7 @@ export default function DispatchScreen() {
                         color: COLORS.textSecondary,
                       }}
                     >
-                      {p.currentBags} bags
+                      {chipAvailable} bags
                     </Text>
                   </Pressable>
                 );
@@ -325,7 +336,7 @@ export default function DispatchScreen() {
                     fontSize: 13,
                   }}
                 >
-                  Stock: {selectedProduct.currentBags} bags
+                  Available: {effectiveAvailable} bags
                 </Text>
                 <Text
                   style={{
@@ -335,7 +346,7 @@ export default function DispatchScreen() {
                     marginLeft: 'auto',
                   }}
                 >
-                  ({(selectedProduct.currentBags * 25).toLocaleString('en-IN')} kg)
+                  ({bagsToKg(effectiveAvailable).toLocaleString('en-IN')} kg)
                 </Text>
               </View>
 
@@ -367,8 +378,8 @@ export default function DispatchScreen() {
                     }}
                   >
                     {wouldGoNegative
-                      ? `⚠ Exceeds current stock by ${bagsNum - selectedProduct.currentBags} bags`
-                      : `Remaining: ${remaining} bags (${remaining * 25} kg)`}
+                      ? `⚠ Exceeds available stock by ${bagsNum - effectiveAvailable} bags`
+                      : `Remaining: ${remaining} bags (${bagsToKg(remaining).toLocaleString('en-IN')} kg)`}
                   </Text>
                 </View>
               )}
@@ -415,7 +426,9 @@ export default function DispatchScreen() {
               message="No dispatches recorded for this date"
             />
           ) : (
-            dateEntries.map((entry) => (
+            dateEntries.map((entry) => {
+              const entrySyncStatus = syncStatus[entry.id] ?? 'synced';
+              return (
               <View key={entry.id} style={{ marginBottom: 10 }}>
                 <Card padding={14} radius={14}>
                   <View
@@ -478,6 +491,7 @@ export default function DispatchScreen() {
                           flexDirection: 'row',
                           gap: 10,
                           marginTop: 4,
+                          alignItems: 'center',
                         }}
                       >
                         <Text
@@ -500,9 +514,13 @@ export default function DispatchScreen() {
                             · {entry.vehicleNumber}
                           </Text>
                         )}
+                        <SyncIndicator
+                          status={entrySyncStatus}
+                          onRetry={() => retrySync(entry.id)}
+                        />
                       </View>
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <Pressable
                         onPress={() => handleEdit(entry)}
                         hitSlop={10}
@@ -531,7 +549,8 @@ export default function DispatchScreen() {
                   </View>
                 </Card>
               </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       </KeyboardAvoidingView>

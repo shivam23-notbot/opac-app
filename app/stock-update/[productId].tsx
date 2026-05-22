@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,16 +15,19 @@ import { PolymerBadge } from '@/components/PolymerBadge';
 import { TextField } from '@/components/TextField';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { SectionLabel } from '@/components/SectionLabel';
+import { InlineDatePicker } from '@/components/InlineDatePicker';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
 import { RAW_MATERIALS } from '@/mocks/rawMaterials';
 import { bagsToKg, formatBagsKg } from '@/lib/units';
+import { todayISO, formatDateReadable } from '@/lib/date';
 import type { MaterialUsage } from '@/types';
 import { COLORS, FONTS } from '@/constants';
 
 export default function StockUpdateScreen() {
+  const today = todayISO();
   const { productId } = useLocalSearchParams<{ productId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -36,9 +39,27 @@ export default function StockUpdateScreen() {
   const logAudit = useAuditStore((s) => s.log);
   const showToast = useUiStore((s) => s.showToast);
 
+  const [entryDate, setEntryDate] = useState(today);
   const [closingBags, setClosingBags] = useState('');
   const [notes, setNotes] = useState('');
   const [materialsKg, setMaterialsKg] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const existing = useInventoryStore.getState().getProduct(productId)?.stockHistory.find(
+      (e) => e.date === entryDate
+    );
+    if (existing) {
+      setClosingBags(String(existing.closingBags));
+      setNotes(existing.notes ?? '');
+      const matMap: Record<string, string> = {};
+      existing.materialsUsed.forEach((mu) => { matMap[mu.materialId] = String(mu.kg); });
+      setMaterialsKg(matMap);
+    } else {
+      setClosingBags('');
+      setNotes('');
+      setMaterialsKg({});
+    }
+  }, [entryDate, productId]);
 
   if (!hasHydrated) return null;
   if (role !== 'worker' && role !== 'admin') {
@@ -64,12 +85,15 @@ export default function StockUpdateScreen() {
     );
   }
 
+  const isToday = entryDate === today;
+  const existingEntry = product.stockHistory.find((e) => e.date === entryDate);
+  const openingBagsForDate = isToday ? product.currentBags : (existingEntry?.openingBags ?? 0);
   const closingNum = parseFloat(closingBags) || 0;
-  const delta = closingBags !== '' ? closingNum - product.currentBags : null;
+  const delta = closingBags !== '' ? closingNum - openingBagsForDate : null;
 
   const handleSave = () => {
     if (closingBags.trim() === '' || closingNum < 0 || isNaN(closingNum)) {
-      showToast('error', 'Closing stock is required');
+      showToast('error', isToday ? 'Closing stock is required' : 'Bags produced is required');
       return;
     }
 
@@ -82,6 +106,7 @@ export default function StockUpdateScreen() {
       materialsUsed: parsedMaterials,
       notes,
       recordedBy: user?.id,
+      date: entryDate,
     });
     logAudit({
       userId: user!.id,
@@ -89,7 +114,7 @@ export default function StockUpdateScreen() {
       action: 'update_stock',
       entity: 'production',
       entityId: productId,
-      detail: `Closing: ${Math.round(closingNum)} bags`,
+      detail: `${isToday ? 'Closing' : `Date ${entryDate} closing`}: ${Math.round(closingNum)} bags`,
     });
 
     showToast('success', 'Stock updated successfully');
@@ -150,11 +175,22 @@ export default function StockUpdateScreen() {
           contentContainerStyle={{ padding: 18, paddingBottom: 60 }}
           keyboardShouldPersistTaps="handled"
         >
+          <InlineDatePicker
+            label="Entry Date"
+            value={entryDate}
+            onChange={setEntryDate}
+            maxDate={today}
+          />
+
           <SectionLabel>Stock Entry</SectionLabel>
 
-          <TextField label="Opening Stock" value={formatBagsKg(product.currentBags)} readOnly />
           <TextField
-            label="Today's Closing Stock"
+            label="Opening Stock"
+            value={formatBagsKg(openingBagsForDate)}
+            readOnly
+          />
+          <TextField
+            label={isToday ? "Today's Closing Stock" : 'Closing Stock'}
             value={closingBags}
             onChangeText={setClosingBags}
             keyboardType="numeric"
@@ -165,7 +201,7 @@ export default function StockUpdateScreen() {
                 ? `= ${bagsToKg(closingNum).toLocaleString('en-IN')} kg`
                 : undefined
             }
-            autoFocus
+            autoFocus={isToday}
           />
 
           {delta !== null && (
@@ -209,7 +245,7 @@ export default function StockUpdateScreen() {
                     textTransform: 'uppercase',
                   }}
                 >
-                  Production Today
+                  {isToday ? 'Production Today' : `Production · ${formatDateReadable(entryDate)}`}
                 </Text>
                 <Text
                   style={{
@@ -239,7 +275,7 @@ export default function StockUpdateScreen() {
           />
 
           <View style={{ marginTop: 8 }}>
-            <SectionLabel>Materials Used Today</SectionLabel>
+            <SectionLabel>Materials Used</SectionLabel>
           </View>
           <Text
             style={{

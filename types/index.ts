@@ -2,6 +2,7 @@ export type PolymerType = 'HDPE' | 'PP' | 'LDPE';
 export type AttendanceStatus = 'absent' | 'full' | 'night' | { hours: number };
 export type UserRole = 'worker' | 'admin';
 export type ToastType = 'success' | 'error';
+export type SyncStatus = 'synced' | 'syncing' | 'error';
 
 export interface User {
   id: string;

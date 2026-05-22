@@ -53,7 +53,8 @@ File-based routing with three route groups:
 - `app/(auth)/` — login screen, no auth required
 - `app/(worker)/` — bottom tab navigator: Home (dashboard), Attendance, Production, Dispatch
 - `app/(admin)/` — six screens (Dashboard, Attendance, Production, Dispatch, Reports, Users). Wide viewports (≥768 px) get a sidebar layout; narrow viewports and native get a bottom tab bar.
-- `app/stock-update/[productId]` — modal screen pushed from the production tab
+- `app/stock-update/[productId]` — modal screen for entering today's or a backdated closing stock
+- `app/product-detail/[productId]` — modal screen with the full stock+dispatch event timeline for one product
 
 `app/index.tsx` reads auth state from `useAuthStore` and redirects to the correct group. Guards live in each group's `_layout.tsx` — non-admins are redirected to login if they hit `/(admin)/*`. **Both layout guards check `_hasHydrated` before redirecting** — return `null` until AsyncStorage has rehydrated, otherwise the still-null `role` causes a spurious redirect to login on cold start.
 
@@ -69,14 +70,32 @@ All stores are in `store/`. Each uses `persist` middleware with a unique storage
 |---|---|---|
 | `authStore` | `user`, `role`, `_hasHydrated` | `login()` calls Supabase Auth then looks up `app_users` by `auth_user_id`; re-hydrates all stores on success; `logout()` |
 | `usersStore` | `users[]` (email/name/role — no password) | `addUser()`, `updateUser()`, `removeUser()`. User CRUD goes through the `manage-users` Edge Function. Guards prevent removing the last admin. **Not persisted to AsyncStorage.** |
-| `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `getTotalAdvances()` |
-| `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>` | `mark()`, `getRecordsForDate()`, `canEdit(date, isAdmin)` |
-| `inventoryStore` | `products[]` | `updateStock()` (writes today's row only), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()` |
-| `dispatchStore` | `entries[]` | `record()` (also `inventoryStore.decrementStock`), `editEntry()` (diffs bags/productId and reconciles stock — see below), `deleteEntry()` (calls `restoreStock`), `getTodayEntries()` |
+| `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `editAdvance()`, `deleteAdvance()`, `updateWorkerWage(id, wage, effectiveFrom)`, `getTotalAdvances()` |
+| `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>`, `syncStatus: Record<string, SyncStatus>` | `mark()`, `unmark()`, `toggleNight()`, `getRecordsForDate()`, `canEdit(date, isAdmin)`, `getSyncStatus(date, employeeId)`, `retrySync(date, employeeId)` |
+| `inventoryStore` | `products[]` | `updateStock()` (optional `date` for backdating), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()`, `getProduct(id)` — use instead of `.products.find()`; also `getActiveProducts()`, `getRetiredProducts()`, `retireProduct()`, `unretireProduct()`, `getProductionToday(productId)` |
+| `dispatchStore` | `entries[]`, `syncStatus: Record<string, SyncStatus>` | `record()`, `editEntry()`, `deleteEntry()`, `getTodayEntries()`, `getEntriesForDate(date)`, `getDispatchesByProduct(productId)`, `retrySync(id)` |
 | `auditStore` | `logs[]` | `log()`, `getLogsForEntity()`, `getRecentLogs(days)`, `pruneOldLogs()` |
 | `uiStore` | `toast` | `showToast()`, `hideToast()` |
 
 `store/useAttendanceStore.ts` is an unused legacy file — do not import from it. The canonical attendance store is `store/attendanceStore.ts`.
+
+### Attendance sync details
+Each attendance record tracks its own sync state via `syncStatus: Record<"date:employeeId", SyncStatus>`. Use `getSyncStatus(date, employeeId)` to read it in a component; the worker card renders a spinner (syncing) or `<WifiOff>` icon (error) accordingly.
+
+The underlying `upsertRecord` uses **delete-then-insert** rather than Supabase's `upsert`. This is intentional: the RLS `UPDATE WITH CHECK` policy pins a row to its original author (`recorded_by = auth.uid()`), so a second user re-marking attendance would fail on update. Deleting first lets any authenticated user replace the row. Do not revert this to `upsert`.
+
+`retrySync(date, employeeId)` re-runs `upsertRecord` for a specific record that landed in `'error'` state, without touching the rest of the store.
+
+### Dispatch sync details
+Each dispatch entry tracks its own sync state via `dispatchStore.syncStatus: Record<entryId, SyncStatus>`. The pattern mirrors attendanceStore:
+- `record()` and `editEntry()` set `syncStatus[id] = 'syncing'` synchronously, then resolve to `'synced'` or `'error'` in the Supabase `.then()`.
+- `retrySync(id)` uses `upsert` (not delete-then-insert) because dispatch entries are only retried by the user who originally created them, so the RLS UPDATE check passes.
+- `syncStatus` is **not persisted** to AsyncStorage (`partialize` excludes it); on app restart `hydrate()` replaces all entries from Supabase and resets `syncStatus: {}`.
+- Consumers subscribe directly: `const syncStatus = useDispatchStore((s) => s.syncStatus)` and read `syncStatus[entry.id] ?? 'synced'` in the render. There is **no `getSyncStatus` method** on dispatchStore — use the object directly.
+- Use `<SyncIndicator status={...} onRetry={...} />` (`components/SyncIndicator.tsx`) to render the spinner / error + retry label. Pass `onRetry` to show the "Upload failed · tap to retry" text label; omit it for an icon-only error state.
+
+### Wage history
+`Worker` has a `wageHistory: { wage: number; effectiveFrom: string }[]` field. `updateWorkerWage(id, wage, effectiveFrom)` appends a new entry and re-sorts by date; `worker.dailyWage` always holds the current (latest) wage. The attendance screen shows full wage history by making the worker's name a `<Pressable>` that opens a "Wage Details" bottom sheet — non-admins see read-only history + prior-month salary summary; the update form is admin-only.
 
 Cross-store coupling lives in store actions (`dispatchStore.record` / `.editEntry` / `.deleteEntry` all mutate `inventoryStore`). Don't duplicate that logic in screens.
 
@@ -84,9 +103,10 @@ Cross-store coupling lives in store actions (`dispatchStore.record` / `.editEntr
 
 ### Key Types (`types/index.ts`)
 ```ts
-type AttendanceStatus = 'absent' | 'full' | { hours: number };
+type AttendanceStatus = 'absent' | 'full' | 'night' | { hours: number };
+type SyncStatus = 'synced' | 'syncing' | 'error';
 ```
-Central union — always handle all three variants when reading attendance records.
+`AttendanceStatus` is a central union — always handle all three variants when reading attendance records. `SyncStatus` is the canonical sync-state type shared by both `attendanceStore` and `dispatchStore`; both stores re-export it (`export type { SyncStatus }`) so importers can use either path.
 
 ### Salary computation (`lib/salary.ts` — authoritative)
 **Never recompute salary from raw records in a screen.** All salary numbers — on-screen totals, modal detail, PDF — must come from `computeMonthlySalary(worker, monthKey, records, allAdvances)`.
@@ -108,18 +128,24 @@ A worker with `settled: true` represents a closed account; the Reports → Salar
 - Removed workers: also hidden if `salaryMonth > worker.removedAt.slice(0, 7)` (already gone)
 This means a worker hired 2026-03-05 and removed 2026-04-10 appears only in March and April salary tabs.
 
-### PDF salary reports (`lib/salaryPdf.ts`)
-`generateWorkerMonthlyPDF(worker, monthKey, records, allAdvances)` is the single entry point. Internals:
-- Builds A4 HTML with the carry-in chain table, attendance table (every day of the month), advance table, and the `A − B + C = NET PAYABLE` totals box.
-- **Web**: `Print.printAsync({ html })` opens the browser print dialog → Save as PDF.
-- **Native**: `Print.printToFileAsync` writes a temp PDF, then `Sharing.shareAsync` opens the OS share sheet.
+### PDF reports (`lib/salaryPdf.ts`, `lib/productionPdf.ts`, `lib/pdfUtils.ts`)
+`lib/pdfUtils.ts` holds three shared helpers used by both PDF modules: `escapeHtml`, `generatedOnString`, and `wrapDocument(styleHtml, bodyHtml)`. `wrapDocument` injects `styleHtml` (a complete `<style>…</style>` block) directly into `<head>` — do not double-wrap.
 
-The Reports → Salary tab has a month stepper (separate from the From/To date pickers, which still drive Production/Dispatch/Audit tabs). "Save All PDFs" generates one separate PDF per worker for the selected month.
+**Salary PDF** — `generateWorkerMonthlyPDF(worker, monthKey, records, allAdvances)` is the single entry point. The A4 layout is one page, two columns:
+- Left (59%): Attendance & Earnings table — advances for a day appear as amber sub-rows immediately below that day's attendance row (no separate advances section). Tfoot shows Gross Earned (A) and Total Advances (B).
+- Right (41%): NET PAYABLE summary box at the top (Gross − Advances + Prev. Balance), then Carry-In Chain table below.
+- Worker card shows name + hire date only; daily wage is omitted (visible in every calc cell).
+- **Web**: opens the browser print dialog. **Native**: `printToFileAsync` + `shareAsync`.
+
+**Production PDF** — `generateProductionMonthlyPDF(products, monthKey, label, displayNameFor)` builds a day-grouped production report. Call `buildProductionDayGroups` separately if you only need the data without printing.
+
+The Reports → Salary tab has a month stepper (separate from the From/To date pickers). "Save All PDFs" generates one separate PDF per worker for the selected salary month. The Production tab has its own independent month stepper (`productionMonth`) used exclusively for PDF generation — the table view still follows `dateFrom`/`dateTo`.
 
 ### Reports screen month vs. range
 - **Salary tab** uses `salaryMonth` (month-only stepper). `salaryRows` and the detail modal both call `computeMonthlySalary(worker, salaryMonth, …)`. Attendance and advance lists inside the modal are scoped to `daysOfMonth(salaryMonth)`.
-- **Production / Dispatch / Audit tabs** use the `dateFrom`/`dateTo` pickers at the top of the screen.
-- Both controls are always visible; each tab reads the one it needs.
+- **Production tab** uses `dateFrom`/`dateTo` for the grouped table display, and a separate `productionMonth` stepper that only governs the "Save PDF" button. The table and PDF can show different time windows simultaneously.
+- **Dispatch / Audit tabs** use only `dateFrom`/`dateTo`.
+- All three controls are always rendered; each tab reads only what it needs.
 
 ### Styling (NativeWind v4 + Tailwind)
 The actual theme is **warm / light** (Anthropic-ish). Custom color tokens are in `tailwind.config.js`. In `className` props use these tokens rather than raw hex:
@@ -129,11 +155,15 @@ The actual theme is **warm / light** (Anthropic-ish). Custom color tokens are in
 - Accent: `text-accent` / `bg-accent` (`#D97757` warm orange)
 - Polymer badges: `polymer-hdpe`, `polymer-pp`, `polymer-ldpe`
 
-For `style={}` prop values (not className) use the constants from `constants/index.ts` (`COLORS.bgPrimary`, `COLORS.accent`, etc.) rather than literal hex — the file also exposes soft-accent variants (`accentSoftBg`, `accentSoftBorder`, `errorSoftBg`) that don't exist in Tailwind. `FONTS` in the same file maps to the Inter / Source Serif 4 families loaded by `@expo-google-fonts`.
+For `style={}` prop values (not className) use the constants from `constants/index.ts` (`COLORS.bgPrimary`, `COLORS.accent`, etc.) rather than literal hex — the file also exposes soft-accent variants (`accentSoftBg`, `accentSoftBorder`, `errorSoftBg`) that don't exist in Tailwind. Additional semantic tokens: `COLORS.success` (green, positive deltas), `COLORS.warning` (amber, advances and partial hours), `COLORS.error` (red, absent and sync failures).
+
+`FONTS` maps to Inter (sans) and Source Serif 4 (serif) loaded by `@expo-google-fonts`. Inter weights: `sansRegular`, `sansMedium`, `sansSemibold`, `sansBold`, `sansExtraBold`, `sansBlack`. Serif weights: `serifMedium`, `serifSemibold`, `serifBold`. Monospace fallback: `FONTS.mono` (`'ui-monospace'`).
 
 ### Shared UI components
 - `components/ConfirmDialog.tsx` — use for every delete / settle / reopen. Render it once at the bottom of the screen, gated on a `*Target` state object that the icon's `onPress` sets. The actual mutation runs in the `onConfirm` callback.
-- `components/DatePickerModal.tsx` — reusable date picker modal. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?` (clamps the +1 day button and validates input), `onConfirm`, `onClose`. Used in the "Add Worker" (Join Date) and "Add Product" (Start Date) sheets, and in `reports.tsx` date-range pickers.
+- `components/SyncIndicator.tsx` — inline sync status indicator. Props: `status: SyncStatus`, `onRetry?: () => void`. Shows a spinner (`syncing`), a tappable WifiOff icon with optional "Upload failed · tap to retry" label (`error`), or nothing (`synced`). Use this in any entry card that tracks a `SyncStatus`.
+- `components/DatePickerModal.tsx` — full-screen modal date picker. Props: `visible`, `value` (YYYY-MM-DD), `label`, `maxDate?`, `onConfirm`, `onClose`. Used in `reports.tsx` date-range pickers.
+- `components/InlineDatePicker.tsx` — compact inline date input with `±1 day` buttons and typed entry. Props: `label`, `value`, `onChange`, `maxDate?`. Used inside bottom sheets (Add Worker, Add Product, wage update, advance recording) and the stock-update modal (entry date picker). Prefer this over `DatePickerModal` inside `<BottomSheet>`.
 
 ### Audit Trail Pattern
 Every mutation that changes business data must call `useAuditStore.getState().log(...)` with `userId`, `userName`, `action`, `entity`, `entityId`, and a human-readable `detail`. Audit logs are displayed only in the admin Reports → Audit Log tab. Retention is enforced by `AUDIT_LOG_RETENTION_DAYS` (90 days) — logs never auto-prune unless `pruneOldLogs()` is called.
@@ -141,14 +171,31 @@ Every mutation that changes business data must call `useAuditStore.getState().lo
 ### 3-Day Edit Restriction
 `attendanceStore.canEdit(date, isAdmin)` returns `false` for non-admins editing records older than 3 days. Check this before any attendance mutation and show an error toast if blocked. Admins bypass.
 
+### Utilities
+- `lib/utils.ts` — exports `generateId()` (nanoid non-secure) used for all local IDs before Supabase sync. Also re-exports `todayISO()`.
+- `lib/date.ts` — beyond `todayISO()` and `formatDateReadable()`, exports `relativeTime(iso)` ("5m ago", "Yesterday") used in audit log display, `subtractDays(n)` for date-range defaults, and `shiftDate(base, days)` to offset an ISO date string by ±N days.
+
 ### Units
 1 bag = 25 kg. Use `lib/units.ts` helpers (`formatBagsKg`, `bagsToKg`) for all bag/kg conversions.
 
 ### Dispatch / Stock Coupling
-Dispatch only operates on products with `currentBags > 0`. The picker filters by stock; submission is blocked if bags requested exceeds `currentBags`. Editing an existing dispatch must still find its product via the unfiltered list (so a now-empty product is still resolvable). `editEntry` reconciles stock automatically.
+Dispatch only operates on products with `currentBags > 0`. The picker filters by stock; submission is blocked if bags requested exceeds the effective available stock. Editing an existing dispatch must still find its product via the unfiltered list (so a now-empty product is still resolvable).
+
+Stock is enforced at **two layers**:
+1. **UI** — `effectiveAvailable` is computed as `currentBags + editRestoreBags` where `editRestoreBags` is the original entry's bag count when editing the same product (because `currentBags` is already decremented by the prior dispatch; those bags are logically restored before re-dispatching). `wouldGoNegative` and `canSubmit` gate the submit button.
+2. **Store** — `record()` and `editEntry()` each re-check stock via `inv.getProduct(id)` and return early if the guard fails, as a safety net against race conditions or direct store calls. Use `inv.getProduct(id)` (not `inv.products.find()`) — the selector is already exposed by `inventoryStore`.
+
+`editEntry` reconciles stock automatically: same-product edits apply the delta (`decrementStock` or `restoreStock`); product-switch edits restore the old product and decrement the new one.
+
+### Production screen list behaviour
+Active products are sorted by `lastUpdated` descending — the most recently updated product floats to the top automatically after every stock update. Filter chips (All / HDPE / PP / LDPE) narrow the list; chips for polymer types with zero active products are hidden. Both sort and chip counts are derived in a single `useMemo([products, polymerFilter])` to avoid re-running on unrelated state changes.
 
 ### Production rule
-`inventoryStore.updateStock` only ever writes the entry whose `date === todayISO()`. Past `stockHistory` rows are immutable through the UI — there is no "edit a past production day" API. If you need to backfill, add a fresh helper rather than mutating history in place (downstream openings rely on history being append-only).
+`inventoryStore.updateStock` accepts an optional `date` field (YYYY-MM-DD, defaults to today):
+- **Today** (default): sets `product.currentBags = closingBags` and writes the Supabase `products` row. `openingBags` is taken from `product.currentBags` (or from the existing today entry if re-updating).
+- **Past date**: upserts only the `stock_history` row. `currentBags` is **not** changed — the physical stock level is unaffected. `openingBags` is taken from the existing history entry if one exists, otherwise `0`.
+
+The `stock-update/[productId]` modal exposes this via `InlineDatePicker` (max = today). Selecting a past date with an existing entry auto-fills the form. Monthly production totals in the production screen and reports already aggregate all `stockHistory` entries filtered by date range, so backdated entries appear automatically.
 
 `inventoryStore.addProduct` accepts an optional `entryDate` (defaults to `todayISO()`). The "Add Product" sheet exposes a **Start Date** picker so opening stock can be backdated to the actual first production day.
 

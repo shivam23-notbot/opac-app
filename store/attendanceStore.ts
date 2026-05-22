@@ -1,13 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { AttendanceStatus, AttendanceRecord } from '@/types';
+import type { AttendanceStatus, AttendanceRecord, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
 
-// Sync state per record key "date:employeeId"
-export type SyncStatus = 'synced' | 'syncing' | 'error';
+export type { SyncStatus };
 
 interface AttendanceState {
   records: Record<string, Record<string, AttendanceRecord>>;
@@ -34,6 +33,7 @@ interface AttendanceState {
   getTodayRecords: () => Record<string, AttendanceRecord>;
   canEdit: (date: string, isAdmin: boolean) => boolean;
   getSyncStatus: (date: string, employeeId: string) => SyncStatus;
+  retrySync: (date: string, employeeId: string) => void;
 }
 
 function syncKey(date: string, employeeId: string) {
@@ -49,19 +49,35 @@ async function upsertRecord(
   recordedAt: string,
   overtimeHours?: number
 ) {
-  const { error } = await supabase.from('attendance').upsert(
-    {
-      id: generateId(),
-      date,
-      employee_id: employeeId,
-      status,
-      night,
-      overtime_hours: overtimeHours ?? null,
-      recorded_by_name: userName,
-      recorded_at: recordedAt,
-    },
-    { onConflict: 'date,employee_id' }
-  );
+  // First try to delete any existing record, then insert fresh.
+  // This avoids RLS UPDATE policy failures when a different user
+  // originally recorded the row (the WITH CHECK on recorded_by
+  // pins UPDATE to the original author, but any authenticated user
+  // should be able to re-mark attendance).
+  await supabase
+    .from('attendance')
+    .delete()
+    .match({ date, employee_id: employeeId });
+
+  const { error } = await supabase.from('attendance').insert({
+    id: generateId(),
+    date,
+    employee_id: employeeId,
+    status,
+    night,
+    overtime_hours: overtimeHours ?? null,
+    recorded_by_name: userName,
+    recorded_at: recordedAt,
+  });
+
+  if (error) {
+    console.error(
+      `[Attendance sync] Failed for ${date}:${employeeId}:`,
+      error.message,
+      error.code,
+      error.details
+    );
+  }
   return error;
 }
 
@@ -211,6 +227,33 @@ export const useAttendanceStore = create<AttendanceState>()(
       },
       getSyncStatus: (date, employeeId) => {
         return get().syncStatus[syncKey(date, employeeId)] ?? 'synced';
+      },
+      retrySync: (date, employeeId) => {
+        const rec = get().records[date]?.[employeeId];
+        if (!rec) return;
+        const key = syncKey(date, employeeId);
+        if (get().syncStatus[key] !== 'error') return;
+
+        set((state) => ({
+          syncStatus: { ...state.syncStatus, [key]: 'syncing' },
+        }));
+
+        upsertRecord(
+          date,
+          employeeId,
+          rec.status,
+          rec.night,
+          rec.recordedByName ?? '',
+          rec.recordedAt,
+          rec.overtimeHours
+        ).then((error) => {
+          set((state) => ({
+            syncStatus: {
+              ...state.syncStatus,
+              [key]: error ? 'error' : 'synced',
+            },
+          }));
+        });
       },
     }),
     {

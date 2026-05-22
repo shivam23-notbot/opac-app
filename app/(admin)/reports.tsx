@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, Platform, Modal } from 'react-native';
 import { DatePickerModal } from '@/components/DatePickerModal';
 import {
@@ -13,6 +13,7 @@ import {
   wageForDate,
 } from '@/lib/salary';
 import { generateWorkerMonthlyPDF } from '@/lib/salaryPdf';
+import { generateProductionMonthlyPDF } from '@/lib/productionPdf';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useAttendanceStore } from '@/store/attendanceStore';
@@ -108,6 +109,95 @@ function TableHeader({ cols }: { cols: string[] }) {
   );
 }
 
+function ProductionMonthStepper({
+  month,
+  isMobile,
+  onPrev,
+  onNext,
+  onSave,
+}: {
+  month: string;
+  isMobile: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.bgSecondary,
+        borderWidth: 1,
+        borderColor: COLORS.borderColor,
+        borderRadius: 12,
+        padding: 10,
+        marginBottom: isMobile ? 10 : 12,
+        gap: 8,
+      }}
+    >
+      <Pressable
+        onPress={onPrev}
+        hitSlop={10}
+        style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary }}
+      >
+        <ChevronLeft size={16} color={COLORS.textSecondary} />
+      </Pressable>
+      <View style={{ alignItems: 'center', flex: 1 }}>
+        <Text
+          style={{
+            color: COLORS.textTertiary,
+            fontFamily: FONTS.sansBold,
+            fontSize: 10,
+            letterSpacing: 1.5,
+            textTransform: 'uppercase',
+          }}
+        >
+          PDF month
+        </Text>
+        <Text
+          style={{
+            color: COLORS.textPrimary,
+            fontFamily: FONTS.sansExtraBold,
+            fontSize: isMobile ? 14 : 15,
+            marginTop: 2,
+          }}
+        >
+          {monthLabel(month)}
+        </Text>
+      </View>
+      <Pressable
+        onPress={onNext}
+        hitSlop={10}
+        style={{
+          padding: 6,
+          borderRadius: 8,
+          backgroundColor: COLORS.bgTertiary,
+          opacity: month >= currentMonthKey() ? 0.35 : 1,
+        }}
+      >
+        <ChevronRight size={16} color={COLORS.textSecondary} />
+      </Pressable>
+      <Pressable
+        onPress={onSave}
+        style={{
+          backgroundColor: COLORS.accent,
+          paddingHorizontal: isMobile ? 12 : 16,
+          paddingVertical: isMobile ? 8 : 9,
+          borderRadius: isMobile ? 8 : 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: isMobile ? 5 : 6,
+        }}
+      >
+        <FileText size={isMobile ? 13 : 14} color="#fff" />
+        <Text style={{ color: '#fff', fontFamily: FONTS.sansBold, fontSize: isMobile ? 11 : 12 }}>
+          {isMobile ? 'PDF' : `Save PDF (${monthLabel(month)})`}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function ReportsScreen() {
   const insets = useSafeAreaInsets();
@@ -122,6 +212,7 @@ export default function ReportsScreen() {
   const [settleTarget, setSettleTarget] = useState<Worker | null>(null);
   const [reopenTarget, setReopenTarget] = useState<Worker | null>(null);
   const [salaryMonth, setSalaryMonth] = useState(currentMonthKey());
+  const [productionMonth, setProductionMonth] = useState(currentMonthKey());
 
   const products = useInventoryStore((s) => s.products);
   const records = useAttendanceStore((s) => s.records);
@@ -226,6 +317,15 @@ export default function ReportsScreen() {
     );
   };
 
+  const saveProductionReport = async () => {
+    try {
+      await generateProductionMonthlyPDF(products, productionMonth, monthLabel(productionMonth), displayNameFor);
+      showToast('success', `Production PDF · ${monthLabel(productionMonth)} ready`);
+    } catch {
+      showToast('error', 'Could not generate PDF');
+    }
+  };
+
   const detailWorker = detailWorkerId ? workers.find((w) => w.id === detailWorkerId) : null;
   const allSalaryRows = [...salaryRows, ...removedRows];
   const detailRow = detailWorkerId
@@ -268,6 +368,22 @@ export default function ReportsScreen() {
     )
     .sort((a, b) => b.date.localeCompare(a.date));
 
+  const productionByDate = useMemo(() => {
+    const map = new Map<string, (typeof productionRows)[0][]>();
+    for (const r of productionRows) {
+      if (!map.has(r.date)) map.set(r.date, []);
+      map.get(r.date)!.push(r);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, rows]) => ({
+        date,
+        totalDelta: rows.reduce((s, r) => s + r.delta, 0),
+        totalKg: rows.reduce((s, r) => s + r.deltaKg, 0),
+        rows,
+      }));
+  }, [productionRows]);
+
   const dispatchRows = entries
     .filter((e) => e.date >= dateFrom && e.date <= dateTo)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -290,11 +406,11 @@ export default function ReportsScreen() {
         )
         .join('\n');
     } else if (activeTab === 'production') {
-      csv = 'Date,Code,Product,Open,Close,Delta (bags),Delta (kg),Recorded By\n';
+      csv = 'Date,Code,Product,Delta (bags),Delta (kg),Open,Close,Recorded By\n';
       csv += productionRows
         .map(
           (r) =>
-            `${r.date},${r.productCode},"${r.productName}",${r.openingBags},${r.closingBags},${r.delta},${r.deltaKg},"${r.recordedBy}"`
+            `${r.date},${r.productCode},"${r.productName}",${r.delta},${r.deltaKg},${r.openingBags},${r.closingBags},"${r.recordedBy}"`
         )
         .join('\n');
     } else if (activeTab === 'dispatch') {
@@ -1031,7 +1147,18 @@ export default function ReportsScreen() {
 
       {activeTab === 'production' && isMobile && (
         <View>
-          {productionRows.length === 0 && (
+          <ProductionMonthStepper
+            month={productionMonth}
+            isMobile
+            onPrev={() => setProductionMonth(shiftMonthKey(productionMonth, -1))}
+            onNext={() => {
+              const next = shiftMonthKey(productionMonth, 1);
+              if (next <= currentMonthKey()) setProductionMonth(next);
+            }}
+            onSave={saveProductionReport}
+          />
+
+          {productionByDate.length === 0 && (
             <View
               style={{
                 padding: 24,
@@ -1047,255 +1174,308 @@ export default function ReportsScreen() {
               </Text>
             </View>
           )}
-          {productionRows.map((r, i) => (
+          {productionByDate.map((group) => (
             <View
-              key={i}
+              key={group.date}
               style={{
                 backgroundColor: COLORS.bgSecondary,
                 borderRadius: 12,
                 borderWidth: 1,
                 borderColor: COLORS.borderColor,
-                padding: 12,
-                marginBottom: 8,
+                marginBottom: 10,
+                overflow: 'hidden',
               }}
             >
+              {/* Date group header */}
               <View
                 style={{
                   flexDirection: 'row',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  marginBottom: 8,
+                  backgroundColor: COLORS.bgTertiary,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderBottomWidth: 1,
+                  borderBottomColor: COLORS.borderColor,
                 }}
               >
                 <Text
                   style={{
                     color: COLORS.textPrimary,
-                    fontFamily: 'ui-monospace',
+                    fontFamily: FONTS.sansBold,
                     fontSize: 13,
-                    fontWeight: '700',
                   }}
                 >
-                  {r.productCode}
+                  {group.date}
                 </Text>
-                <Text
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text
+                    style={{
+                      color: COLORS.accent,
+                      fontFamily: FONTS.sansExtraBold,
+                      fontSize: 14,
+                    }}
+                  >
+                    +{group.totalDelta} bags
+                  </Text>
+                  <Text
+                    style={{
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansMedium,
+                      fontSize: 10,
+                    }}
+                  >
+                    {group.totalKg} kg · {group.rows.length} product{group.rows.length !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+              </View>
+              {/* Product rows */}
+              {group.rows.map((r, i) => (
+                <View
+                  key={i}
                   style={{
-                    color: COLORS.textTertiary,
-                    fontFamily: FONTS.sansMedium,
-                    fontSize: 11,
+                    padding: 10,
+                    paddingLeft: 14,
+                    backgroundColor: i % 2 === 0 ? COLORS.bgSecondary : COLORS.bgPrimary,
+                    borderTopWidth: i > 0 ? 1 : 0,
+                    borderTopColor: COLORS.borderColor,
                   }}
                 >
-                  {r.date}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
-                <View style={{ flex: 1 }}>
-                  <Text
+                  <View
                     style={{
-                      color: COLORS.textTertiary,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 9,
-                      letterSpacing: 1,
-                      textTransform: 'uppercase',
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 4,
                     }}
                   >
-                    Open
-                  </Text>
-                  <Text
-                    style={{
-                      color: COLORS.textSecondary,
-                      fontFamily: FONTS.sansSemibold,
-                      fontSize: 13,
-                    }}
-                  >
-                    {r.openingBags}
-                  </Text>
+                    <Text
+                      style={{
+                        color: COLORS.textPrimary,
+                        fontFamily: 'ui-monospace',
+                        fontSize: 12,
+                        fontWeight: '700',
+                      }}
+                    >
+                      {r.productCode}
+                    </Text>
+                    <Text
+                      style={{
+                        color: r.delta >= 0 ? COLORS.accent : COLORS.error,
+                        fontFamily: FONTS.sansBold,
+                        fontSize: 14,
+                      }}
+                    >
+                      {r.delta >= 0 ? '+' : ''}
+                      {r.delta} bags
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      <Text
+                        style={{
+                          color: COLORS.textTertiary,
+                          fontFamily: FONTS.sansMedium,
+                          fontSize: 11,
+                        }}
+                      >
+                        {r.openingBags} → {r.closingBags}
+                      </Text>
+                      <Text
+                        style={{
+                          color: COLORS.textTertiary,
+                          fontFamily: FONTS.sansMedium,
+                          fontSize: 11,
+                        }}
+                      >
+                        {r.deltaKg} kg
+                      </Text>
+                    </View>
+                    <Text
+                      style={{
+                        color: COLORS.textTertiary,
+                        fontFamily: FONTS.sansMedium,
+                        fontSize: 10,
+                      }}
+                    >
+                      {r.recordedBy}
+                    </Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      color: COLORS.textTertiary,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 9,
-                      letterSpacing: 1,
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    Close
-                  </Text>
-                  <Text
-                    style={{
-                      color: COLORS.textSecondary,
-                      fontFamily: FONTS.sansSemibold,
-                      fontSize: 13,
-                    }}
-                  >
-                    {r.closingBags}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      color: COLORS.textTertiary,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 9,
-                      letterSpacing: 1,
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    Δ bags
-                  </Text>
-                  <Text
-                    style={{
-                      color: r.delta >= 0 ? COLORS.accent : COLORS.error,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 13,
-                    }}
-                  >
-                    {r.delta >= 0 ? '+' : ''}
-                    {r.delta}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      color: COLORS.textTertiary,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 9,
-                      letterSpacing: 1,
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    Δ kg
-                  </Text>
-                  <Text
-                    style={{
-                      color: r.deltaKg >= 0 ? COLORS.accent : COLORS.error,
-                      fontFamily: FONTS.sansBold,
-                      fontSize: 13,
-                    }}
-                  >
-                    {r.deltaKg}
-                  </Text>
-                </View>
-              </View>
-              <Text
-                style={{
-                  color: COLORS.textTertiary,
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 10,
-                  marginTop: 4,
-                }}
-              >
-                By {r.recordedBy}
-              </Text>
+              ))}
             </View>
           ))}
         </View>
       )}
 
       {activeTab === 'production' && !isMobile && (
-        <View
-          style={{
-            backgroundColor: COLORS.bgSecondary,
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: COLORS.borderColor,
-            overflow: 'hidden',
-          }}
-        >
-          <TableHeader cols={['Date', 'Code', 'Open', 'Close', 'Δ bags', 'Δ kg', 'By']} />
-          {productionRows.length === 0 && (
-            <View style={{ padding: 24, alignItems: 'center' }}>
-              <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>
-                No production records in range
-              </Text>
-            </View>
-          )}
-          {productionRows.map((r, i) => (
-            <View
-              key={i}
-              style={{
-                flexDirection: 'row',
-                padding: 10,
-                backgroundColor: altRow(i),
-                borderTopWidth: 1,
-                borderTopColor: COLORS.borderColor,
-              }}
-            >
-              <Text
-                style={{
-                  flex: 1,
-                  color: COLORS.textSecondary,
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 11,
-                }}
-              >
-                {r.date}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: COLORS.textPrimary,
-                  fontFamily: 'ui-monospace',
-                  fontSize: 11,
-                  fontWeight: '700',
-                }}
-              >
-                {r.productCode}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: COLORS.textSecondary,
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 11,
-                }}
-              >
-                {r.openingBags}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: COLORS.textSecondary,
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 11,
-                }}
-              >
-                {r.closingBags}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: r.delta >= 0 ? COLORS.accent : COLORS.error,
-                  fontFamily: FONTS.sansSemibold,
-                  fontSize: 11,
-                }}
-              >
-                {r.delta >= 0 ? '+' : ''}
-                {r.delta}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: r.deltaKg >= 0 ? COLORS.accent : COLORS.error,
-                  fontFamily: FONTS.sansSemibold,
-                  fontSize: 11,
-                }}
-              >
-                {r.deltaKg}
-              </Text>
-              <Text
-                style={{
-                  flex: 1,
-                  color: COLORS.textTertiary,
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 10,
-                }}
-              >
-                {r.recordedBy}
-              </Text>
-            </View>
-          ))}
+        <View>
+          <ProductionMonthStepper
+            month={productionMonth}
+            isMobile={false}
+            onPrev={() => setProductionMonth(shiftMonthKey(productionMonth, -1))}
+            onNext={() => {
+              const next = shiftMonthKey(productionMonth, 1);
+              if (next <= currentMonthKey()) setProductionMonth(next);
+            }}
+            onSave={saveProductionReport}
+          />
+
+          {/* Grouped production table */}
+          <View
+            style={{
+              backgroundColor: COLORS.bgSecondary,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: COLORS.borderColor,
+              overflow: 'hidden',
+            }}
+          >
+            <TableHeader cols={['Date', 'Code', 'Δ bags', 'Open', 'Close', 'Δ kg', 'By']} />
+            {productionByDate.length === 0 && (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>
+                  No production records in range
+                </Text>
+              </View>
+            )}
+            {productionByDate.map((group, gi) => (
+              <View key={group.date}>
+                {/* Date group header row */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    padding: 10,
+                    backgroundColor: COLORS.bgTertiary,
+                    borderTopWidth: gi > 0 ? 2 : 1,
+                    borderTopColor: COLORS.borderStrong,
+                  }}
+                >
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: COLORS.textPrimary,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 11,
+                    }}
+                  >
+                    {group.date}
+                  </Text>
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: COLORS.textTertiary,
+                      fontFamily: FONTS.sansMedium,
+                      fontSize: 10,
+                    }}
+                  >
+                    {group.rows.length} product{group.rows.length !== 1 ? 's' : ''}
+                  </Text>
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: COLORS.accent,
+                      fontFamily: FONTS.sansBold,
+                      fontSize: 11,
+                    }}
+                  >
+                    +{group.totalDelta} total
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                  <View style={{ flex: 1 }} />
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: COLORS.accent,
+                      fontFamily: FONTS.sansMedium,
+                      fontSize: 11,
+                    }}
+                  >
+                    {group.totalKg} kg
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                </View>
+                {/* Product sub-rows */}
+                {group.rows.map((r, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      flexDirection: 'row',
+                      padding: 10,
+                      paddingLeft: 16,
+                      backgroundColor: i % 2 === 0 ? COLORS.bgSecondary : COLORS.bgPrimary,
+                      borderTopWidth: 1,
+                      borderTopColor: COLORS.borderColor,
+                    }}
+                  >
+                    <View style={{ flex: 1 }} />
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: COLORS.textPrimary,
+                        fontFamily: 'ui-monospace',
+                        fontSize: 11,
+                        fontWeight: '700',
+                      }}
+                    >
+                      {r.productCode}
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: r.delta >= 0 ? COLORS.accent : COLORS.error,
+                        fontFamily: FONTS.sansSemibold,
+                        fontSize: 11,
+                      }}
+                    >
+                      {r.delta >= 0 ? '+' : ''}
+                      {r.delta}
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: COLORS.textSecondary,
+                        fontFamily: FONTS.sansMedium,
+                        fontSize: 11,
+                      }}
+                    >
+                      {r.openingBags}
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: COLORS.textSecondary,
+                        fontFamily: FONTS.sansMedium,
+                        fontSize: 11,
+                      }}
+                    >
+                      {r.closingBags}
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: r.deltaKg >= 0 ? COLORS.accent : COLORS.error,
+                        fontFamily: FONTS.sansSemibold,
+                        fontSize: 11,
+                      }}
+                    >
+                      {r.deltaKg}
+                    </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        color: COLORS.textTertiary,
+                        fontFamily: FONTS.sansMedium,
+                        fontSize: 10,
+                      }}
+                    >
+                      {r.recordedBy}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
         </View>
       )}
 

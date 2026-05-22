@@ -11,6 +11,7 @@ interface UpdateStockPayload {
   materialsUsed: MaterialUsage[];
   notes?: string;
   recordedBy?: string;
+  date?: string; // omit for today; past dates add history without updating currentBags
 }
 
 interface NewProductPayload {
@@ -78,18 +79,25 @@ export const useInventoryStore = create<InventoryState>()(
         set({ products });
       },
 
-      updateStock: (productId, { closingBags, materialsUsed, notes, recordedBy }) => {
+      updateStock: (productId, { closingBags, materialsUsed, notes, recordedBy, date }) => {
         set((state) => ({
           products: state.products.map((p) => {
             if (p.id !== productId) return p;
             const today = todayISO();
-            const existingIdx = p.stockHistory.findIndex((e) => e.date === today);
+            const entryDate = date ?? today;
+            const isToday = entryDate === today;
+            const existingIdx = p.stockHistory.findIndex((e) => e.date === entryDate);
             const now = new Date().toISOString();
+            const openingBags =
+              existingIdx >= 0
+                ? p.stockHistory[existingIdx].openingBags
+                : isToday
+                  ? p.currentBags
+                  : 0;
             const entry = {
               id: existingIdx >= 0 ? p.stockHistory[existingIdx].id : generateId(),
-              date: today,
-              openingBags:
-                existingIdx >= 0 ? p.stockHistory[existingIdx].openingBags : p.currentBags,
+              date: entryDate,
+              openingBags,
               closingBags,
               materialsUsed,
               notes,
@@ -105,8 +113,8 @@ export const useInventoryStore = create<InventoryState>()(
               {
                 id: entry.id,
                 product_id: productId,
-                date: today,
-                opening_bags: entry.openingBags,
+                date: entryDate,
+                opening_bags: openingBags,
                 closing_bags: closingBags,
                 materials_used: materialsUsed,
                 notes,
@@ -114,11 +122,14 @@ export const useInventoryStore = create<InventoryState>()(
               },
               { onConflict: 'product_id,date' }
             ).then(() => {});
-            supabase
-              .from('products')
-              .update({ current_bags: closingBags, last_updated: now })
-              .eq('id', productId).then(() => {});
-            return { ...p, currentBags: closingBags, lastUpdated: now, stockHistory: newHistory };
+            if (isToday) {
+              supabase
+                .from('products')
+                .update({ current_bags: closingBags, last_updated: now })
+                .eq('id', productId).then(() => {});
+              return { ...p, currentBags: closingBags, lastUpdated: now, stockHistory: newHistory };
+            }
+            return { ...p, lastUpdated: now, stockHistory: newHistory };
           }),
         }));
       },
