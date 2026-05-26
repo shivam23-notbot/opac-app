@@ -28,7 +28,7 @@ import { COLORS, FONTS } from '@/constants';
 
 export default function StockUpdateScreen() {
   const today = todayISO();
-  const { productId } = useLocalSearchParams<{ productId: string }>();
+  const { productId, date: initialDate } = useLocalSearchParams<{ productId: string; date?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const getProduct = useInventoryStore((s) => s.getProduct);
@@ -39,7 +39,7 @@ export default function StockUpdateScreen() {
   const logAudit = useAuditStore((s) => s.log);
   const showToast = useUiStore((s) => s.showToast);
 
-  const [entryDate, setEntryDate] = useState(today);
+  const [entryDate, setEntryDate] = useState(initialDate ?? today);
   const [closingBags, setClosingBags] = useState('');
   const [notes, setNotes] = useState('');
   const [materialsKg, setMaterialsKg] = useState<Record<string, string>>({});

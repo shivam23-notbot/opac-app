@@ -206,6 +206,16 @@ The `stock-update/[productId]` modal exposes this via `InlineDatePicker` (max = 
 
 `inventoryStore.addProduct` accepts an optional `entryDate` (defaults to `todayISO()`). The "Add Product" sheet exposes a **Start Date** picker so opening stock can be backdated to the actual first production day.
 
+### openingBags propagation (retroactive dispatch fix)
+`decrementStock(productId, bags, dispatchDate?)` and `restoreStock(productId, bags, dispatchDate?)` accept an optional `dispatchDate`. When provided, they also update `openingBags` on every `stock_history` entry with `date > dispatchDate` (strictly after). This ensures that a retroactive dispatch for day D correctly adjusts the "bags produced" calculation for all subsequent production days (their `openingBags` was captured before the retroactive dispatch was known).
+
+`deleteStockEntry` similarly propagates: when a production entry for day D (delta = closingBags − openingBags) is deleted, all entries with `date > D` have their `openingBags` decreased by that delta.
+
+`dispatchStore.record()`, `.editEntry()`, and `.deleteEntry()` all pass the dispatch entry's date to `decrementStock`/`restoreStock`. **Always pass the dispatch date** when calling these functions — omitting it skips the openingBags propagation.
+
+### Production entry edit/delete (admin only)
+The `product-detail/[productId]` screen shows Edit (pencil) and Delete (trash) icons on each production event for admins. Edit navigates to `/stock-update/${productId}?date=${entry.date}` — the stock-update modal reads the optional `date` query param to pre-select the entry. Delete calls `deleteStockEntry` after a `ConfirmDialog` confirmation.
+
 ### Toast
 `useUiStore().showToast('success' | 'error', message)` — the `<Toast />` component is mounted once in `app/_layout.tsx` at z-index 9999.
 

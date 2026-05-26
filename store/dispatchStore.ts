@@ -71,7 +71,7 @@ export const useDispatchStore = create<DispatchState>()(
           entries: [...state.entries, entry],
           syncStatus: { ...state.syncStatus, [entry.id]: 'syncing' },
         }));
-        inv.decrementStock(entry.productId, entry.bags);
+        inv.decrementStock(entry.productId, entry.bags, entry.date);
 
         supabase
           .from('dispatch_entries')
@@ -108,11 +108,11 @@ export const useDispatchStore = create<DispatchState>()(
 
         if (newProductId === prev.productId) {
           const delta = newBags - prev.bags;
-          if (delta > 0) inv.decrementStock(prev.productId, delta);
-          else if (delta < 0) inv.restoreStock(prev.productId, -delta);
+          if (delta > 0) inv.decrementStock(prev.productId, delta, updated.date);
+          else if (delta < 0) inv.restoreStock(prev.productId, -delta, updated.date);
         } else {
-          inv.restoreStock(prev.productId, prev.bags);
-          inv.decrementStock(newProductId, newBags);
+          inv.restoreStock(prev.productId, prev.bags, prev.date);
+          inv.decrementStock(newProductId, newBags, updated.date);
         }
 
         supabase
@@ -136,7 +136,7 @@ export const useDispatchStore = create<DispatchState>()(
       deleteEntry: (id) => {
         const entry = get().entries.find((e) => e.id === id);
         if (entry) {
-          useInventoryStore.getState().restoreStock(entry.productId, entry.bags);
+          useInventoryStore.getState().restoreStock(entry.productId, entry.bags, entry.date);
         }
         set((state) => {
           const newSync = { ...state.syncStatus };

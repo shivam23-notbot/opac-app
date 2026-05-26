@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Plus, Package, Truck, Clock } from 'lucide-react-native';
+import { X, Plus, Package, Truck, Clock, Pencil, Trash2 } from 'lucide-react-native';
 import { Card } from '@/components/ui/Card';
 import { PolymerBadge, polymerColor } from '@/components/PolymerBadge';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { SectionLabel } from '@/components/SectionLabel';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useDispatchStore } from '@/store/dispatchStore';
 import { useAuthStore } from '@/store/authStore';
@@ -15,6 +17,7 @@ import { COLORS, FONTS } from '@/constants';
 
 interface StockEvent {
   kind: 'stock';
+  entryId: string;
   date: string;
   sortKey: string;
   title: string;
@@ -98,10 +101,12 @@ export default function ProductDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const product = useInventoryStore((s) => s.getProduct(productId));
+  const deleteStockEntry = useInventoryStore((s) => s.deleteStockEntry);
   const getDispatchesByProduct = useDispatchStore((s) => s.getDispatchesByProduct);
   const role = useAuthStore((s) => s.role);
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const displayNameFor = useUsersStore((s) => s.displayNameFor);
+  const [deleteTarget, setDeleteTarget] = useState<{ entryId: string; date: string } | null>(null);
 
   if (!hasHydrated) return null;
   if (role !== 'worker' && role !== 'admin') {
@@ -138,6 +143,7 @@ export default function ProductDetailScreen() {
     const delta = h.closingBags - h.openingBags;
     events.push({
       kind: 'stock',
+      entryId: h.id,
       date: h.date,
       sortKey: h.date,
       title:
@@ -213,6 +219,21 @@ export default function ProductDetailScreen() {
         </View>
         <PolymerBadge type={product.polymer} />
       </View>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete Production Entry"
+        message={`Remove the production entry for ${deleteTarget?.date}? This will adjust opening stock for all subsequent production days.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteStockEntry(productId, deleteTarget.entryId);
+            setDeleteTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 40 }}>
         {/* Hero */}
@@ -475,6 +496,9 @@ export default function ProductDetailScreen() {
                           paddingTop: 6,
                           borderTopWidth: 1,
                           borderTopColor: COLORS.borderColor,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
                         }}
                       >
                         <Text
@@ -486,6 +510,30 @@ export default function ProductDetailScreen() {
                         >
                           By {e.by}
                         </Text>
+                        {e.kind === 'stock' && role === 'admin' && (
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Pressable
+                              onPress={() =>
+                                router.push(
+                                  `/stock-update/${productId}?date=${e.date}` as `/${string}`
+                                )
+                              }
+                              hitSlop={8}
+                              style={{ padding: 4 }}
+                            >
+                              <Pencil size={14} color={COLORS.accent} />
+                            </Pressable>
+                            <Pressable
+                              onPress={() =>
+                                setDeleteTarget({ entryId: e.entryId, date: e.date })
+                              }
+                              hitSlop={8}
+                              style={{ padding: 4 }}
+                            >
+                              <Trash2 size={14} color={COLORS.error} />
+                            </Pressable>
+                          </View>
+                        )}
                       </View>
                     )}
                   </Card>

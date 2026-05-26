@@ -28,8 +28,8 @@ interface InventoryState {
   products: Product[];
   hydrate: () => Promise<void>;
   updateStock: (productId: string, payload: UpdateStockPayload) => void;
-  decrementStock: (productId: string, bags: number) => void;
-  restoreStock: (productId: string, bags: number) => void;
+  decrementStock: (productId: string, bags: number, dispatchDate?: string) => void;
+  restoreStock: (productId: string, bags: number, dispatchDate?: string) => void;
   getProduct: (productId: string) => Product | undefined;
   getProductionToday: (productId: string) => number;
   addProduct: (payload: NewProductPayload) => void;
@@ -134,14 +134,34 @@ export const useInventoryStore = create<InventoryState>()(
         }));
       },
 
-      decrementStock: (productId, bags) => {
+      decrementStock: (productId, bags, dispatchDate?) => {
         const now = new Date().toISOString();
+        const currentProduct = get().products.find((p) => p.id === productId);
+        // Pre-compute which stock_history entries need openingBags adjusted.
+        // A dispatch on dispatchDate reduces the opening stock for all production
+        // entries recorded AFTER that date (strict), because those entries captured
+        // their openingBags before this dispatch was known.
+        const historyUpdates: Record<string, number> = {};
+        if (dispatchDate && currentProduct) {
+          currentProduct.stockHistory.forEach((h) => {
+            if (h.date > dispatchDate) {
+              historyUpdates[h.id] = Math.max(0, h.openingBags - bags);
+            }
+          });
+        }
         set((state) => ({
-          products: state.products.map((p) =>
-            p.id === productId
-              ? { ...p, currentBags: Math.max(0, p.currentBags - bags), lastUpdated: now }
-              : p
-          ),
+          products: state.products.map((p) => {
+            if (p.id !== productId) return p;
+            const newHistory =
+              Object.keys(historyUpdates).length > 0
+                ? p.stockHistory.map((h) =>
+                    historyUpdates[h.id] !== undefined
+                      ? { ...h, openingBags: historyUpdates[h.id] }
+                      : h
+                  )
+                : p.stockHistory;
+            return { ...p, currentBags: Math.max(0, p.currentBags - bags), lastUpdated: now, stockHistory: newHistory };
+          }),
         }));
         const product = get().products.find((p) => p.id === productId);
         if (product) {
@@ -150,16 +170,35 @@ export const useInventoryStore = create<InventoryState>()(
             .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
+        Object.entries(historyUpdates).forEach(([id, newOpeningBags]) => {
+          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', id).then(() => {});
+        });
       },
 
-      restoreStock: (productId, bags) => {
+      restoreStock: (productId, bags, dispatchDate?) => {
         const now = new Date().toISOString();
+        const currentProduct = get().products.find((p) => p.id === productId);
+        const historyUpdates: Record<string, number> = {};
+        if (dispatchDate && currentProduct) {
+          currentProduct.stockHistory.forEach((h) => {
+            if (h.date > dispatchDate) {
+              historyUpdates[h.id] = h.openingBags + bags;
+            }
+          });
+        }
         set((state) => ({
-          products: state.products.map((p) =>
-            p.id === productId
-              ? { ...p, currentBags: p.currentBags + bags, lastUpdated: now }
-              : p
-          ),
+          products: state.products.map((p) => {
+            if (p.id !== productId) return p;
+            const newHistory =
+              Object.keys(historyUpdates).length > 0
+                ? p.stockHistory.map((h) =>
+                    historyUpdates[h.id] !== undefined
+                      ? { ...h, openingBags: historyUpdates[h.id] }
+                      : h
+                  )
+                : p.stockHistory;
+            return { ...p, currentBags: p.currentBags + bags, lastUpdated: now, stockHistory: newHistory };
+          }),
         }));
         const product = get().products.find((p) => p.id === productId);
         if (product) {
@@ -168,6 +207,9 @@ export const useInventoryStore = create<InventoryState>()(
             .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
+        Object.entries(historyUpdates).forEach(([id, newOpeningBags]) => {
+          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', id).then(() => {});
+        });
       },
 
       getProduct: (productId) => get().products.find((p) => p.id === productId),
@@ -233,28 +275,54 @@ export const useInventoryStore = create<InventoryState>()(
       },
 
       deleteStockEntry: (productId, entryId) => {
+        const currentProduct = get().products.find((p) => p.id === productId);
+        if (!currentProduct) return;
+        const entry = currentProduct.stockHistory.find((e) => e.id === entryId);
+        if (!entry) return;
+
+        const productionDelta = entry.closingBags - entry.openingBags;
+        const now = new Date().toISOString();
+        const latestDate = currentProduct.stockHistory.reduce(
+          (max, e) => (e.date > max ? e.date : max),
+          ''
+        );
+        const isLatest = entry.date === latestDate;
+
+        // Subsequent production entries had their openingBags set assuming this
+        // day's production existed. Remove its contribution.
+        const historyUpdates: Record<string, number> = {};
+        if (productionDelta !== 0) {
+          currentProduct.stockHistory.forEach((h) => {
+            if (h.date > entry.date) {
+              historyUpdates[h.id] = Math.max(0, h.openingBags - productionDelta);
+            }
+          });
+        }
+
         set((state) => ({
           products: state.products.map((p) => {
             if (p.id !== productId) return p;
-            const entry = p.stockHistory.find((e) => e.id === entryId);
-            if (!entry) return p;
             const remaining = p.stockHistory.filter((e) => e.id !== entryId);
-            const latestDate = p.stockHistory.reduce(
-              (max, e) => (e.date > max ? e.date : max),
-              ''
+            const finalBags = isLatest ? entry.openingBags : p.currentBags;
+            const finalHistory = remaining.map((h) =>
+              historyUpdates[h.id] !== undefined
+                ? { ...h, openingBags: historyUpdates[h.id] }
+                : h
             );
-            const isLatest = entry.date === latestDate;
-            const newBags = isLatest ? entry.openingBags : p.currentBags;
-            supabase.from('stock_history').delete().eq('id', entryId).then(() => {});
-            if (isLatest) {
-              supabase
-                .from('products')
-                .update({ current_bags: newBags, last_updated: new Date().toISOString() })
-                .eq('id', productId).then(() => {});
-            }
-            return { ...p, currentBags: newBags, stockHistory: remaining, lastUpdated: new Date().toISOString() };
+            return { ...p, currentBags: finalBags, stockHistory: finalHistory, lastUpdated: now };
           }),
         }));
+
+        supabase.from('stock_history').delete().eq('id', entryId).then(() => {});
+        if (isLatest) {
+          supabase
+            .from('products')
+            .update({ current_bags: entry.openingBags, last_updated: now })
+            .eq('id', productId).then(() => {});
+        }
+        Object.entries(historyUpdates).forEach(([id, newOpeningBags]) => {
+          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', id).then(() => {});
+        });
       },
 
       retireProduct: (productId) => {
