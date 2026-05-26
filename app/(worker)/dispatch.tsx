@@ -240,13 +240,8 @@ export default function DispatchScreen() {
                 Update stock before recording a dispatch.
               </Text>
             </View>
-          ) : null}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 16 }}
-          >
-            <View style={{ flexDirection: 'row', gap: 10 }}>
+          ) : (
+            <View style={{ marginBottom: 16 }}>
               {products.map((p) => {
                 const sel = selectedProductId === p.id;
                 // In edit mode the original bags for the edited product are logically restored,
@@ -260,56 +255,79 @@ export default function DispatchScreen() {
                     key={p.id}
                     onPress={() => {
                       setSelectedProductId(p.id);
-                      resetForm();
+                      if (!sel) resetForm();
                     }}
-                    style={{
-                      paddingVertical: 10,
-                      paddingHorizontal: 14,
-                      borderRadius: 12,
+                    style={({ pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: sel
+                        ? COLORS.accentSoftBg
+                        : pressed
+                        ? COLORS.bgTertiary
+                        : COLORS.bgSecondary,
                       borderWidth: 1,
                       borderColor: sel ? COLORS.accent : COLORS.borderColor,
-                      backgroundColor: sel ? COLORS.accentSoftBg : COLORS.bgSecondary,
-                      minWidth: 130,
-                      shadowColor: sel ? COLORS.accent : 'transparent',
-                      shadowOpacity: sel ? 0.1 : 0,
-                      shadowRadius: 3,
-                      shadowOffset: { width: 0, height: 0 },
-                    }}
+                      borderRadius: 14,
+                      paddingHorizontal: 14,
+                      paddingVertical: 13,
+                      marginBottom: 8,
+                      gap: 12,
+                    })}
                   >
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginBottom: 4,
-                      }}
-                    >
+                    <PolymerBadge type={p.polymer} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
                       <Text
                         style={{
-                          fontFamily: 'ui-monospace',
-                          fontSize: 11,
+                          fontFamily: FONTS.mono,
+                          fontSize: 14,
                           fontWeight: '700',
-                          color: sel ? COLORS.accent : COLORS.textPrimary,
+                          color: COLORS.accent,
+                          letterSpacing: 0.3,
                         }}
+                        numberOfLines={1}
                       >
                         {p.code}
                       </Text>
-                      <PolymerBadge type={p.polymer} size="sm" />
+                      <Text
+                        style={{
+                          fontFamily: FONTS.sansSemibold,
+                          fontSize: 12,
+                          color: COLORS.textSecondary,
+                          marginTop: 2,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {p.name}
+                      </Text>
                     </View>
-                    <Text
-                      style={{
-                        fontFamily: FONTS.sansMedium,
-                        fontSize: 11,
-                        color: COLORS.textSecondary,
-                      }}
-                    >
-                      {chipAvailable} bags
-                    </Text>
+                    <View style={{ alignItems: 'flex-end', gap: 1 }}>
+                      <Text
+                        style={{
+                          fontFamily: FONTS.sansExtraBold,
+                          fontSize: 18,
+                          color: sel ? COLORS.accent : COLORS.textPrimary,
+                          letterSpacing: -0.5,
+                        }}
+                      >
+                        {chipAvailable}
+                      </Text>
+                      <Text
+                        style={{
+                          fontFamily: FONTS.sansMedium,
+                          fontSize: 9,
+                          color: COLORS.textTertiary,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.8,
+                        }}
+                      >
+                        bags
+                      </Text>
+                    </View>
                   </Pressable>
                 );
               })}
             </View>
-          </ScrollView>
+          )}
 
           {/* Form */}
           {selectedProduct && (

@@ -192,6 +192,11 @@ Stock is enforced at **two layers**:
 ### Production screen list behaviour
 Active products are sorted by `lastUpdated` descending — the most recently updated product floats to the top automatically after every stock update. Filter chips (All / HDPE / PP / LDPE) narrow the list; chips for polymer types with zero active products are hidden. Both sort and chip counts are derived in a single `useMemo([products, polymerFilter])` to avoid re-running on unrelated state changes.
 
+**Product row layout (CompactProductRow):** `product.code` is shown first/large (accent mono, fontSize 14) with the month-delta badge inline. `product.name` (description) is shown below it in smaller text (sansSemibold, fontSize 12, textSecondary). This is intentional — the short code acts as the primary identifier.
+
+### Dispatch screen product picker
+Products are displayed as a vertical scrollable list (not a horizontal swipe row). Each row shows a `PolymerBadge`, `product.code` (accent mono, top/large), `product.name` (below/small), and the available bag count on the right. Tapping a row selects it (accent border + soft background). The form for entering dispatch details appears below the product list. Both `(worker)/dispatch.tsx` and `(admin)/dispatch.tsx` use this layout — the admin version is a re-export of the worker version.
+
 ### Production rule
 `inventoryStore.updateStock` accepts an optional `date` field (YYYY-MM-DD, defaults to today):
 - **Today** (default): sets `product.currentBags = closingBags` and writes the Supabase `products` row. `openingBags` is taken from `product.currentBags` (or from the existing today entry if re-updating).

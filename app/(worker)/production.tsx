@@ -110,21 +110,16 @@ const CompactProductRow = React.memo(function CompactProductRow({
       <PolymerBadge type={product.polymer} />
 
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          style={{ fontFamily: FONTS.sansSemibold, fontSize: 14, color: COLORS.textPrimary }}
-          numberOfLines={1}
-        >
-          {product.name}
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Text
             style={{
               fontFamily: FONTS.mono,
-              fontSize: 11,
+              fontSize: 14,
               fontWeight: '700',
               color: COLORS.accent,
               letterSpacing: 0.3,
             }}
+            numberOfLines={1}
           >
             {product.code}
           </Text>
@@ -143,6 +138,12 @@ const CompactProductRow = React.memo(function CompactProductRow({
             </>
           )}
         </View>
+        <Text
+          style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}
+          numberOfLines={1}
+        >
+          {product.name}
+        </Text>
         <Text
           style={{
             fontFamily: FONTS.sansMedium,
