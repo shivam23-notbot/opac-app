@@ -27,7 +27,9 @@ All `npm` start scripts wrap Expo CLI with `NODE_OPTIONS=--no-experimental-requi
 
 Install with `npm install --legacy-peer-deps` (Expo 54 + RN 0.81 peer-dep mismatches).
 
-Demo credentials exist in Supabase Auth and are linked to `app_users` rows: `admin@opac.in / admin123`, `manager@opac.in / manager123`, `supervisor@opac.in / worker123`, `operator@opac.in / worker123`. Treat the passwords as throwaway; rotate before any non-dev usage. For fresh Supabase projects, follow the bootstrap recipe in `README.md`.
+Demo credentials exist in Supabase Auth and are linked to `app_users` rows: `admin@opac.in / admin123`, `pradip@opac.in / pradip123`, `manager@opac.in / manager123`, `supervisor@opac.in / worker123`, `operator@opac.in / worker123`. Treat the passwords as throwaway; rotate before any non-dev usage. For fresh Supabase projects, follow the bootstrap recipe in `README.md`.
+
+`pradip@opac.in` (Pradip Savaliya) was promoted to `admin` role on 2026-05-26 via the admin Users screen. Both app and browser versions reflect this change immediately — the role is stored in `app_users.role` in Supabase, shared by all platforms.
 
 ## Architecture
 
