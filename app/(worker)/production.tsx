@@ -104,7 +104,7 @@ const CompactProductRow = React.memo(function CompactProductRow({
         paddingHorizontal: 14,
         paddingVertical: 13,
         marginBottom: 8,
-        gap: 12,
+        gap: 8,
       })}
     >
       <PolymerBadge type={product.polymer} />
@@ -140,7 +140,7 @@ const CompactProductRow = React.memo(function CompactProductRow({
         </View>
         <Text
           style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}
-          numberOfLines={1}
+          numberOfLines={2}
         >
           {product.name}
         </Text>
@@ -217,8 +217,6 @@ const CompactProductRow = React.memo(function CompactProductRow({
           <Archive size={14} color={COLORS.textTertiary} />
         </Pressable>
       )}
-
-      <ChevronRight size={16} color={COLORS.borderStrong} />
     </Pressable>
   );
 });
