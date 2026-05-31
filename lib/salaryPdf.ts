@@ -81,8 +81,8 @@ export function buildMonthlySalaryHTML(
           (a) => `
           <tr class="adv-row">
             <td></td>
-            <td colspan="3" class="adv-detail">↳ ${escapeHtml(a.note ?? 'Advance payment')}</td>
-            <td class="num adv-detail">${formatRupee(-a.amount)}</td>
+            <td colspan="3" class="adv-detail"><strong>↳ ${escapeHtml(a.note ?? 'Advance payment')}</strong></td>
+            <td class="num adv-detail"><strong>${formatRupee(-a.amount)}</strong></td>
           </tr>`
         )
         .join('');
@@ -108,7 +108,7 @@ export function buildMonthlySalaryHTML(
         </div>
       </div>
       <div class="meta">
-        <div><strong>Month:</strong> ${escapeHtml(salary.monthLabel)}</div>
+        <div><strong>Worker Since:</strong> ${escapeHtml(worker.createdAt)}</div>
         <div><strong>Generated:</strong> ${escapeHtml(generatedOn)}</div>
       </div>
     </header>
@@ -119,8 +119,8 @@ export function buildMonthlySalaryHTML(
         <div class="value-lg">${escapeHtml(worker.name)}</div>
       </div>
       <div>
-        <div class="label">Worker Since</div>
-        <div class="value-lg">${escapeHtml(worker.createdAt)}</div>
+        <div class="label">Month</div>
+        <div class="value-lg value-month">${escapeHtml(salary.monthLabel)}</div>
       </div>
     </div>
 
@@ -142,17 +142,17 @@ export function buildMonthlySalaryHTML(
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="4" class="right"><strong>Gross Earned (A)</strong></td>
+              <td colspan="4" class="right"><strong>Pagar (A)</strong></td>
               <td class="num"><strong>₹${salary.grossEarned.toFixed(0)}</strong></td>
             </tr>
             <tr class="tfoot-adv">
-              <td colspan="4" class="right muted">Total Advances (B)</td>
+              <td colspan="4" class="right muted">Upad (B)</td>
               <td class="num muted">−₹${salary.totalAdvances.toFixed(0)}</td>
             </tr>
           </tfoot>
         </table>
         <div class="counts">
-          <span>Present: <strong>${salary.presentDays}</strong></span>
+          <span>Hajari: <strong>${salary.presentDays}</strong></span>
           <span>Partial: <strong>${salary.partialDays}</strong></span>
           <span>Absent: <strong>${salary.absentDays}</strong></span>
           <span class="muted">Unmarked: ${salary.unmarkedDays}</span>
@@ -162,23 +162,23 @@ export function buildMonthlySalaryHTML(
       <div class="col-right">
         <div class="totals">
           <div class="totals-row">
-            <span>Gross Earned (A)</span>
+            <span>Pagar (A)</span>
             <span>+₹${salary.grossEarned.toFixed(0)}</span>
           </div>
           <div class="totals-row">
-            <span>Advances (B)</span>
+            <span>Upad (B)</span>
             <span>−₹${salary.totalAdvances.toFixed(0)}</span>
           </div>
           <div class="totals-row">
-            <span>Prev. Balance (C)</span>
+            <span>last month pagar (C)</span>
             <span>${formatRupeeSigned(salary.openingBalance)}</span>
           </div>
           <div class="totals-row grand">
-            <span>NET PAYABLE</span>
+            <span>TOTAL PAGAR</span>
             <span>${formatRupee(salary.closingBalance)}</span>
           </div>
           <div class="net-month">${escapeHtml(salary.monthLabel.toUpperCase())}</div>
-          <div class="formula">A − B + C = Net Payable</div>
+          <div class="formula">A − B + C = Total Pagar</div>
         </div>
 
         <h2>Carry-In Chain</h2>
@@ -215,7 +215,7 @@ export function buildMonthlySalaryHTML(
 
 const STYLE = `
   <style>
-    @page { size: A4; margin: 12mm 12mm 12mm 12mm; }
+    @page { size: A4; margin: 8mm 10mm 8mm 10mm; }
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
@@ -231,24 +231,24 @@ const STYLE = `
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
-      padding-bottom: 8px;
+      padding-bottom: 6px;
       border-bottom: 2px solid #1f1e1c;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
     .brand { display: flex; align-items: center; gap: 8px; }
     .brand-mark {
-      width: 30px; height: 30px;
+      width: 28px; height: 28px;
       background: #D97757; color: #fff;
       border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 20px; font-weight: 700;
+      font-size: 18px; font-weight: 700;
       font-family: Georgia, 'Source Serif 4', serif;
     }
     .brand-name {
       font-family: Georgia, 'Source Serif 4', serif;
-      font-size: 16px; font-weight: 700; letter-spacing: -0.4px;
+      font-size: 15px; font-weight: 700; letter-spacing: -0.4px;
     }
-    .brand-sub { font-size: 9px; color: #5e5b54; letter-spacing: 1px; text-transform: uppercase; }
+    .brand-sub { font-size: 8px; color: #5e5b54; letter-spacing: 1px; text-transform: uppercase; }
     .meta { text-align: right; font-size: 9px; color: #5e5b54; line-height: 1.5; }
     .meta strong { color: #1f1e1c; }
 
@@ -259,18 +259,19 @@ const STYLE = `
       background: #f4f2ea;
       border: 1px solid #e8e4d6;
       border-radius: 6px;
-      padding: 8px 10px;
-      margin-bottom: 10px;
+      padding: 6px 10px;
+      margin-bottom: 8px;
     }
     .label { font-size: 8px; color: #8e8b82; letter-spacing: 1.5px; text-transform: uppercase; }
     .value-lg { font-size: 13px; font-weight: 700; margin-top: 2px; }
+    .value-month { font-size: 15px; }
 
     h2 {
       font-size: 9px;
       letter-spacing: 1.5px;
       text-transform: uppercase;
       color: #8e8b82;
-      margin: 8px 0 4px 0;
+      margin: 5px 0 3px 0;
       font-weight: 700;
     }
 
@@ -278,6 +279,8 @@ const STYLE = `
       display: flex;
       gap: 12px;
       align-items: flex-start;
+      break-before: avoid;
+      page-break-before: avoid;
     }
     .col-left { flex: 0 0 59%; min-width: 0; }
     .col-left h2:first-child { margin-top: 0; }
@@ -290,7 +293,7 @@ const STYLE = `
     }
     table th {
       text-align: left;
-      padding: 4px 5px;
+      padding: 3px 4px;
       background: #f4f2ea;
       border-bottom: 1px solid #d4cdb8;
       font-size: 8px;
@@ -299,7 +302,7 @@ const STYLE = `
       color: #5e5b54;
     }
     table td {
-      padding: 3px 5px;
+      padding: 2px 4px;
       border-bottom: 1px solid #f0ecdf;
       line-height: 1.3;
     }
@@ -307,7 +310,7 @@ const STYLE = `
       background: #f4f2ea;
       border-top: 2px solid #1f1e1c;
       border-bottom: none;
-      padding: 5px 5px;
+      padding: 4px 5px;
     }
     table tfoot tr.tfoot-adv td {
       border-top: none;
@@ -326,12 +329,12 @@ const STYLE = `
       padding-top: 1px;
       padding-bottom: 2px;
     }
-    .adv-detail { color: #b07040; font-size: 8px; }
+    .adv-detail { color: #b07040; font-size: 8px; font-weight: 700; }
 
     .counts {
       display: flex;
       gap: 10px;
-      margin-top: 4px;
+      margin-top: 2px;
       font-size: 9px;
       color: #5e5b54;
     }
@@ -340,7 +343,7 @@ const STYLE = `
     .totals {
       border: 1px solid #1f1e1c;
       border-radius: 6px;
-      padding: 10px 12px;
+      padding: 8px 10px;
       background: #fff;
     }
     .totals-row {
@@ -375,8 +378,8 @@ const STYLE = `
     footer {
       display: flex;
       justify-content: space-between;
-      margin-top: 10px;
-      padding-top: 6px;
+      margin-top: 6px;
+      padding-top: 5px;
       border-top: 1px solid #e8e4d6;
       font-size: 8px;
       color: #8e8b82;
