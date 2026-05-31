@@ -354,15 +354,13 @@ export default function ProductDetailScreen() {
             />
           </View>
 
-          {!retired && (
-            <View style={{ marginTop: 14 }}>
-              <PrimaryButton
-                label="Update Stock"
-                onPress={() => router.push(`/stock-update/${product.id}`)}
-                icon={<Plus size={16} color="#fff" />}
-              />
-            </View>
-          )}
+          <View style={{ marginTop: 14 }}>
+            <PrimaryButton
+              label="Add Production"
+              onPress={() => router.push(`/stock-update/${product.id}`)}
+              icon={<Plus size={16} color="#fff" />}
+            />
+          </View>
         </Card>
 
         <SectionLabel>History · {events.length} events</SectionLabel>
