@@ -145,7 +145,7 @@ export default function ProductDetailScreen() {
       kind: 'stock',
       entryId: h.id,
       date: h.date,
-      sortKey: h.date,
+      sortKey: h.recordedAt,
       title:
         delta === 0
           ? 'Stock adjusted'
@@ -513,7 +513,7 @@ export default function ProductDetailScreen() {
                             <Pressable
                               onPress={() =>
                                 router.push(
-                                  `/stock-update/${productId}?date=${e.date}` as `/${string}`
+                                  `/stock-update/${productId}?entryId=${e.entryId}` as `/${string}`
                                 )
                               }
                               hitSlop={8}

@@ -74,7 +74,7 @@ All stores are in `store/`. Each uses `persist` middleware with a unique storage
 | `usersStore` | `users[]` (email/name/role — no password) | `addUser()`, `updateUser()`, `removeUser()`. User CRUD goes through the `manage-users` Edge Function. Guards prevent removing the last admin. **Not persisted to AsyncStorage.** |
 | `workersStore` | `workers[]`, `advances[]` | `addWorker({ ..., createdAt? })` (optional past hire date), `removeWorker()` (soft delete, sets `active=false`), `settleWorker()`/`unsettleWorker()`, `addAdvance()`, `editAdvance()`, `deleteAdvance()`, `updateWorkerWage(id, wage, effectiveFrom)`, `getTotalAdvances()` |
 | `attendanceStore` | `records: Record<date, Record<employeeId, AttendanceRecord>>`, `syncStatus: Record<string, SyncStatus>` | `mark()`, `unmark()`, `toggleNight()`, `getRecordsForDate()`, `canEdit(date, isAdmin)`, `getSyncStatus(date, employeeId)`, `retrySync(date, employeeId)` |
-| `inventoryStore` | `products[]` | `updateStock()` (optional `date` for backdating), `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()`, `getProduct(id)` — use instead of `.products.find()`; also `getActiveProducts()`, `getRetiredProducts()`, `retireProduct()`, `unretireProduct()`, `getProductionToday(productId)` |
+| `inventoryStore` | `products[]` | `addProductionEntry(productId, { closingBags, materialsUsed, notes?, date? })` — always INSERTs a new entry (multiple per day allowed); `editProductionEntry(productId, entryId, { closingBags, materialsUsed, notes? })` — edits an existing entry and propagates delta to the immediate next entry's opening; `decrementStock()`, `restoreStock()`, `addProduct()`, `deleteStockEntry()`, `getProduct(id)` — use instead of `.products.find()`; also `getActiveProducts()`, `getRetiredProducts()`, `retireProduct()`, `unretireProduct()`, `getProductionToday(productId)` |
 | `dispatchStore` | `entries[]`, `syncStatus: Record<string, SyncStatus>` | `record()`, `editEntry()`, `deleteEntry()`, `getTodayEntries()`, `getEntriesForDate(date)`, `getDispatchesByProduct(productId)`, `retrySync(id)` |
 | `auditStore` | `logs[]` | `log()`, `getLogsForEntity()`, `getRecentLogs(days)`, `pruneOldLogs()` |
 | `uiStore` | `toast` | `showToast()`, `hideToast()` |
@@ -197,24 +197,37 @@ Active products are sorted by `lastUpdated` descending — the most recently upd
 ### Dispatch screen product picker
 Products are displayed as a vertical scrollable list (not a horizontal swipe row). Each row shows a `PolymerBadge`, `product.code` (accent mono, top/large), `product.name` (below/small), and the available bag count on the right. Tapping a row selects it (accent border + soft background). The form for entering dispatch details appears below the product list. Both `(worker)/dispatch.tsx` and `(admin)/dispatch.tsx` use this layout — the admin version is a re-export of the worker version.
 
-### Production rule
-`inventoryStore.updateStock` accepts an optional `date` field (YYYY-MM-DD, defaults to today):
-- **Today** (default): sets `product.currentBags = closingBags` and writes the Supabase `products` row. `openingBags` is taken from `product.currentBags` (or from the existing today entry if re-updating).
-- **Past date**: upserts only the `stock_history` row. `currentBags` is **not** changed — the physical stock level is unaffected. `openingBags` is taken from the existing history entry if one exists, otherwise `0`.
+### Production rule — multiple entries per day
+`stock_history` allows multiple entries per product per day (the unique `(product_id, date)` constraint has been dropped). Use `addProductionEntry` and `editProductionEntry` — never upsert by date.
 
-The `stock-update/[productId]` modal exposes this via `InlineDatePicker` (max = today). Selecting a past date with an existing entry auto-fills the form. Monthly production totals in the production screen and reports already aggregate all `stockHistory` entries filtered by date range, so backdated entries appear automatically.
+**`addProductionEntry(productId, { closingBags, materialsUsed, notes?, date? })`**:
+- Always INSERTs a new `stock_history` row (never replaces an existing one by date).
+- `openingBags` is computed automatically:
+  - **Today** (default): `product.currentBags` — already accounts for all prior production and dispatches.
+  - **Past date**: closing of the last `stock_history` entry on or before `entryDate` (same-day entries included), or 0 if none.
+- Updates `product.currentBags` only for today entries.
+
+**`editProductionEntry(productId, entryId, { closingBags, materialsUsed, notes? })`**:
+- Updates a specific entry's `closingBags`. Propagates the delta to the **immediate next entry's** `openingBags` (sorted by date + recordedAt). Only one entry is updated — the chain propagates naturally since subsequent entries' closings are unchanged.
+- Updates `product.currentBags` if the edited entry was the last in the chain.
+
+**Chain rule**: entries sort by `(date asc, recordedAt asc)`. `openingBags[i] ≈ closingBags[i-1]` (adjusted by any dispatches between them via `decrementStock`/`restoreStock` propagation).
+
+The `stock-update/[productId]` modal has two modes:
+- **Add mode** (no `entryId` param): shows the date picker, creates a new entry via `addProductionEntry`.
+- **Edit mode** (`?entryId=<id>`): hides the date picker (date is fixed), pre-fills the entry, saves via `editProductionEntry`.
 
 `inventoryStore.addProduct` accepts an optional `entryDate` (defaults to `todayISO()`). The "Add Product" sheet exposes a **Start Date** picker so opening stock can be backdated to the actual first production day.
 
 ### openingBags propagation (retroactive dispatch fix)
 `decrementStock(productId, bags, dispatchDate?)` and `restoreStock(productId, bags, dispatchDate?)` accept an optional `dispatchDate`. When provided, they also update `openingBags` on every `stock_history` entry with `date > dispatchDate` (strictly after). This ensures that a retroactive dispatch for day D correctly adjusts the "bags produced" calculation for all subsequent production days (their `openingBags` was captured before the retroactive dispatch was known).
 
-`deleteStockEntry` similarly propagates: when a production entry for day D (delta = closingBags − openingBags) is deleted, all entries with `date > D` have their `openingBags` decreased by that delta.
+`deleteStockEntry` propagates to only the **immediate next** entry's `openingBags` (not all subsequent): it shifts that entry by `−productionDelta`. The rest of the chain is unaffected because subsequent entries' openings depend on the next entry's closing (which doesn't change).
 
 `dispatchStore.record()`, `.editEntry()`, and `.deleteEntry()` all pass the dispatch entry's date to `decrementStock`/`restoreStock`. **Always pass the dispatch date** when calling these functions — omitting it skips the openingBags propagation.
 
 ### Production entry edit/delete (admin only)
-The `product-detail/[productId]` screen shows Edit (pencil) and Delete (trash) icons on each production event for admins. Edit navigates to `/stock-update/${productId}?date=${entry.date}` — the stock-update modal reads the optional `date` query param to pre-select the entry. Delete calls `deleteStockEntry` after a `ConfirmDialog` confirmation.
+The `product-detail/[productId]` screen shows Edit (pencil) and Delete (trash) icons on each production event for admins. Edit navigates to `/stock-update/${productId}?entryId=${entry.id}` — the stock-update modal reads `entryId` to enter edit mode. Delete calls `deleteStockEntry` after a `ConfirmDialog` confirmation.
 
 ### Toast
 `useUiStore().showToast('success' | 'error', message)` — the `<Toast />` component is mounted once in `app/_layout.tsx` at z-index 9999.
