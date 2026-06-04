@@ -32,14 +32,22 @@ interface WorkersState {
   getTotalAdvances: (workerId: string, upToDate?: string) => number;
 }
 
+// For duplicate effectiveFrom dates, keep the last entry (most recently added).
+function dedupeWageHistory(history: WageEntry[]): WageEntry[] {
+  const map = new Map<string, WageEntry>();
+  for (const entry of history) map.set(entry.effectiveFrom, entry);
+  return [...map.values()].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+}
+
 function rowToWorker(row: Record<string, unknown>): Worker {
   const dailyWage = Number(row.daily_wage);
   const createdDate = (row.created_at as string).slice(0, 10);
   const rawHistory = row.wage_history as WageEntry[] | null | undefined;
-  // Migrate: existing workers without wage_history get a synthetic first entry
+  // Migrate: existing workers without wage_history get a synthetic first entry.
+  // Deduplicate to repair any previously stored duplicate effectiveFrom entries.
   const wageHistory: WageEntry[] =
     rawHistory && rawHistory.length > 0
-      ? rawHistory
+      ? dedupeWageHistory(rawHistory)
       : [{ wage: dailyWage, effectiveFrom: createdDate }];
   return {
     id: row.id as string,
@@ -154,7 +162,8 @@ export const useWorkersStore = create<WorkersState>()(
             if (w.id !== workerId) return w;
             const existing = w.wageHistory ?? [{ wage: w.dailyWage, effectiveFrom: w.createdAt.slice(0, 10) }];
             const newEntry: WageEntry = { wage: newWage, effectiveFrom };
-            const wageHistory = [...existing, newEntry]
+            // Remove any existing entry for the same date before adding the new one.
+            const wageHistory = [...existing.filter((e) => e.effectiveFrom !== effectiveFrom), newEntry]
               .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
             // dailyWage = latest entry effective on or before today
             let currentWage = wageHistory[0].wage;

@@ -14,7 +14,7 @@ export function wageForDate(worker: Worker, dateISO: string): number {
   let applicable: WageEntry | undefined;
   for (const entry of history) {
     if (entry.effectiveFrom <= dateISO) {
-      if (!applicable || entry.effectiveFrom > applicable.effectiveFrom) {
+      if (!applicable || entry.effectiveFrom >= applicable.effectiveFrom) {
         applicable = entry;
       }
     }
