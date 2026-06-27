@@ -56,6 +56,7 @@ export interface MaterialUsage {
 export interface StockEntry {
   id: string;
   date: string;
+  bagsProduced: number;
   openingBags: number;
   closingBags: number;
   materialsUsed: MaterialUsage[];

@@ -9,11 +9,11 @@ import { TextField } from '@/components/TextField';
 import { BottomSheet } from '@/components/BottomSheet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useInventoryStore } from '@/store/inventoryStore';
+import { useDispatchStore } from '@/store/dispatchStore';
 import { useAuthStore } from '@/store/authStore';
 import { useAuditStore } from '@/store/auditStore';
 import { useUiStore } from '@/store/uiStore';
-import { relativeTime, formatDateReadable, todayISO } from '@/lib/date';
-import { currentMonthKey, shiftMonthKey, monthLabel, daysOfMonth } from '@/lib/salary';
+import { relativeTime, formatDateReadable, todayISO, shiftDate } from '@/lib/date';
 import { bagsToKg } from '@/lib/units';
 import { generateId } from '@/lib/utils';
 import type { PolymerType, Product } from '@/types';
@@ -72,152 +72,251 @@ function deltaColor(n: number): string {
 
 const CompactProductRow = React.memo(function CompactProductRow({
   product,
-  monthStart,
-  monthEnd,
+  productionDate,
   onTap,
   onUpdate,
   onRetire,
 }: {
   product: Product;
-  monthStart: string;
-  monthEnd: string;
+  productionDate: string;
   onTap: () => void;
   onUpdate: () => void;
   onRetire?: () => void;
 }) {
-  const monthEntries = product.stockHistory.filter(
-    (e) => e.date >= monthStart && e.date <= monthEnd
-  );
-  const monthProduced = monthEntries.reduce((s, e) => s + (e.closingBags - e.openingBags), 0);
-  const hasMonthData = monthEntries.length > 0;
+  const [showDispatch, setShowDispatch] = useState(false);
+  const [dispatchBags, setDispatchBags] = useState('');
+  const [dispatchRecipient, setDispatchRecipient] = useState('');
+  
+  const recordDispatch = useDispatchStore((s) => s.record);
+  const user = useAuthStore((s) => s.user);
+  const logAudit = useAuditStore((s) => s.log);
+  const showToast = useUiStore((s) => s.showToast);
+
+  const today = todayISO();
+  const dateEntries = product.stockHistory.filter((e) => e.date === productionDate);
+  const bagsProduced = dateEntries.reduce((s, e) => s + e.bagsProduced, 0);
+  const hasData = dateEntries.length > 0;
+
+  let availableBags = 0;
+  if (productionDate === today) {
+    availableBags = product.currentBags;
+  } else {
+    const sorted = [...product.stockHistory].sort((a, b) =>
+      a.date !== b.date ? a.date.localeCompare(b.date) : a.recordedAt.localeCompare(b.recordedAt)
+    );
+    const prev = [...sorted].reverse().find((e) => e.date <= productionDate);
+    availableBags = prev?.closingBags ?? 0;
+  }
+
+  const handleDispatch = () => {
+    const qty = parseInt(dispatchBags);
+    if (!qty || qty <= 0) {
+      showToast('error', 'Enter a valid quantity');
+      return;
+    }
+    if (qty > availableBags) {
+      showToast('error', 'Not enough stock available');
+      return;
+    }
+    if (!dispatchRecipient.trim()) {
+      showToast('error', 'Enter recipient');
+      return;
+    }
+
+    recordDispatch({
+      date: productionDate,
+      productId: product.id,
+      productCode: product.code,
+      bags: qty,
+      recipient: dispatchRecipient.trim(),
+      recordedBy: user?.name ?? 'unknown',
+    });
+
+    logAudit({
+      userId: user!.id,
+      userName: user!.name,
+      action: 'dispatch_stock',
+      entity: 'dispatch',
+      entityId: product.id,
+      detail: `${qty} bags to ${dispatchRecipient.trim()} (${productionDate})`,
+    });
+
+    setDispatchBags('');
+    setDispatchRecipient('');
+    setShowDispatch(false);
+    showToast('success', 'Dispatch recorded');
+  };
 
   return (
-    <Pressable
-      onPress={onTap}
-      style={({ pressed }) => ({
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: pressed ? COLORS.bgTertiary : COLORS.bgSecondary,
-        borderWidth: 1,
-        borderColor: COLORS.borderColor,
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        paddingVertical: 13,
-        marginBottom: 8,
-        gap: 8,
-      })}
-    >
-      <PolymerBadge type={product.polymer} />
-
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <Text
-            style={{
-              fontFamily: FONTS.mono,
-              fontSize: 14,
-              fontWeight: '700',
-              color: COLORS.accent,
-              letterSpacing: 0.3,
-            }}
-            numberOfLines={1}
-          >
-            {product.code}
-          </Text>
-          {hasMonthData && (
-            <>
-              <Text style={{ color: COLORS.borderStrong, fontSize: 10 }}>·</Text>
-              <Text
-                style={{
-                  fontFamily: FONTS.sansMedium,
-                  fontSize: 11,
-                  color: deltaColor(monthProduced),
-                }}
-              >
-                {monthProduced >= 0 ? `+${monthProduced}` : monthProduced} bags
-              </Text>
-            </>
-          )}
-        </View>
-        <Text
-          style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}
-          numberOfLines={2}
-        >
-          {product.name}
-        </Text>
-        <Text
-          style={{
-            fontFamily: FONTS.sansMedium,
-            fontSize: 10,
-            color: COLORS.textTertiary,
-            marginTop: 2,
-          }}
-        >
-          {relativeTime(product.lastUpdated)}
-        </Text>
-      </View>
-
-      <View style={{ alignItems: 'flex-end', gap: 1, marginRight: 4 }}>
-        <Text
-          style={{
-            fontFamily: FONTS.sansExtraBold,
-            fontSize: 20,
-            color: COLORS.textPrimary,
-            letterSpacing: -0.5,
-          }}
-        >
-          {product.currentBags}
-        </Text>
-        <Text
-          style={{
-            fontFamily: FONTS.sansMedium,
-            fontSize: 9,
-            color: COLORS.textTertiary,
-            textTransform: 'uppercase',
-            letterSpacing: 0.8,
-          }}
-        >
-          bags
-        </Text>
-      </View>
-
-      {/* stopPropagation prevents the outer row's onTap from also firing on web */}
+    <View style={{ marginBottom: 8 }}>
       <Pressable
-        onPress={(e) => { e.stopPropagation(); onUpdate(); }}
-        hitSlop={8}
+        onPress={onTap}
         style={({ pressed }) => ({
-          width: 34,
-          height: 34,
-          borderRadius: 17,
-          backgroundColor: pressed ? COLORS.accentPressed : COLORS.accent,
+          flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'center',
-          shadowColor: COLORS.accent,
-          shadowOpacity: 0.28,
-          shadowRadius: 6,
-          shadowOffset: { width: 0, height: 2 },
-          elevation: 3,
+          backgroundColor: pressed ? COLORS.bgTertiary : COLORS.bgSecondary,
+          borderWidth: 1,
+          borderColor: COLORS.borderColor,
+          borderRadius: 14,
+          paddingHorizontal: 14,
+          paddingVertical: 13,
+          gap: 8,
+          borderBottomLeftRadius: showDispatch ? 0 : 14,
+          borderBottomRightRadius: showDispatch ? 0 : 14,
         })}
       >
-        <Plus size={16} color="#fff" />
-      </Pressable>
+        <PolymerBadge type={product.polymer} />
 
-      {onRetire && (
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <Text
+              style={{
+                fontFamily: FONTS.mono,
+                fontSize: 14,
+                fontWeight: '700',
+                color: COLORS.accent,
+                letterSpacing: 0.3,
+              }}
+              numberOfLines={1}
+            >
+              {product.code}
+            </Text>
+            {hasData && (
+              <>
+                <Text style={{ color: COLORS.borderStrong, fontSize: 10 }}>·</Text>
+                <Text
+                  style={{
+                    fontFamily: FONTS.sansMedium,
+                    fontSize: 11,
+                    color: bagsProduced > 0 ? COLORS.success : COLORS.textTertiary,
+                  }}
+                >
+                  {bagsProduced > 0 ? `+${bagsProduced}` : bagsProduced} bags produced
+                </Text>
+              </>
+            )}
+          </View>
+          <Text
+            style={{ fontFamily: FONTS.sansSemibold, fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}
+            numberOfLines={2}
+          >
+            {product.name}
+          </Text>
+          <Text
+            style={{
+              fontFamily: FONTS.sansMedium,
+              fontSize: 10,
+              color: COLORS.textTertiary,
+              marginTop: 2,
+            }}
+          >
+            {relativeTime(product.lastUpdated)}
+          </Text>
+        </View>
+
+        <View style={{ alignItems: 'flex-end', gap: 1, marginRight: 4 }}>
+          <Text
+            style={{
+              fontFamily: FONTS.sansExtraBold,
+              fontSize: 20,
+              color: COLORS.textPrimary,
+              letterSpacing: -0.5,
+            }}
+          >
+            {availableBags}
+          </Text>
+          <Text
+            style={{
+              fontFamily: FONTS.sansMedium,
+              fontSize: 9,
+              color: COLORS.textTertiary,
+              textTransform: 'uppercase',
+              letterSpacing: 0.8,
+            }}
+          >
+            {productionDate === today ? 'bags' : 'at end of day'}
+          </Text>
+        </View>
+
+        {availableBags > 0 && (
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation();
+              setShowDispatch(!showDispatch);
+            }}
+            hitSlop={8}
+            style={{
+              paddingHorizontal: 8,
+              paddingVertical: 6,
+              borderRadius: 8,
+              backgroundColor: COLORS.bgTertiary,
+              borderWidth: 1,
+              borderColor: COLORS.borderColor,
+            }}
+          >
+            <Text style={{ color: COLORS.textPrimary, fontFamily: FONTS.sansBold, fontSize: 10 }}>
+              DISPATCH
+            </Text>
+          </Pressable>
+        )}
+
         <Pressable
-          onPress={(e) => { e.stopPropagation(); onRetire(); }}
+          onPress={(e) => { e.stopPropagation(); onUpdate(); }}
           hitSlop={8}
           style={({ pressed }) => ({
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            backgroundColor: pressed ? COLORS.bgTertiary : 'transparent',
+            width: 34,
+            height: 34,
+            borderRadius: 17,
+            backgroundColor: pressed ? COLORS.accentPressed : COLORS.accent,
             alignItems: 'center',
             justifyContent: 'center',
+            shadowColor: COLORS.accent,
+            shadowOpacity: 0.28,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 3,
           })}
         >
-          <Archive size={14} color={COLORS.textTertiary} />
+          <Plus size={16} color="#fff" />
         </Pressable>
+      </Pressable>
+
+      {showDispatch && (
+        <View
+          style={{
+            backgroundColor: COLORS.bgSecondary,
+            borderWidth: 1,
+            borderTopWidth: 0,
+            borderColor: COLORS.borderColor,
+            borderBottomLeftRadius: 14,
+            borderBottomRightRadius: 14,
+            padding: 12,
+            paddingTop: 8,
+          }}
+        >
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+            <View style={{ flex: 1 }}>
+              <TextField
+                label="Bags to Dispatch"
+                value={dispatchBags}
+                onChangeText={setDispatchBags}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+            </View>
+            <View style={{ flex: 2 }}>
+              <TextField
+                label="Recipient"
+                value={dispatchRecipient}
+                onChangeText={setDispatchRecipient}
+                placeholder="Client or location"
+              />
+            </View>
+          </View>
+          <PrimaryButton label="Confirm Dispatch" onPress={handleDispatch} />
+        </View>
       )}
-    </Pressable>
+    </View>
   );
 });
 
@@ -401,7 +500,8 @@ export default function ProductionScreen() {
   const [newEntryDate, setNewEntryDate] = useState(todayISO());
   const [retireTarget, setRetireTarget] = useState<Product | null>(null);
   const [unretireTarget, setUnretireTarget] = useState<Product | null>(null);
-  const [reportMonth, setReportMonth] = useState(currentMonthKey());
+  const [productionDate, setProductionDate] = useState(todayISO());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [polymerFilter, setPolymerFilter] = useState<PolymerFilter>('All');
 
@@ -427,10 +527,7 @@ export default function ProductionScreen() {
     return { active, retired, filteredActive, totalStock, polymerCounts };
   }, [products, polymerFilter]);
 
-  const { monthStart, monthEnd } = useMemo(() => {
-    const days = daysOfMonth(reportMonth);
-    return { monthStart: days[0], monthEnd: days[days.length - 1] };
-  }, [reportMonth]);
+
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -498,74 +595,107 @@ export default function ProductionScreen() {
           />
         </View>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: COLORS.bgSecondary,
-            borderWidth: 1,
-            borderColor: COLORS.borderColor,
-            borderRadius: 12,
-            padding: 10,
-            marginBottom: 14,
-          }}
-        >
-          <Pressable
-            onPress={() => setReportMonth(shiftMonthKey(reportMonth, -1))}
-            hitSlop={10}
-            style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary }}
-          >
-            <ChevronLeft size={16} color={COLORS.textSecondary} />
-          </Pressable>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text
-              style={{
-                color: COLORS.textTertiary,
-                fontFamily: FONTS.sansBold,
-                fontSize: 10,
-                letterSpacing: 1.5,
-                textTransform: 'uppercase',
-              }}
-            >
-              Report Month
-            </Text>
-            <Text
-              style={{
-                color: COLORS.textPrimary,
-                fontFamily: FONTS.sansExtraBold,
-                fontSize: 15,
-                marginTop: 2,
-              }}
-            >
-              {monthLabel(reportMonth)}
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => setReportMonth(shiftMonthKey(reportMonth, 1))}
-            hitSlop={10}
+        <>
+          <View
             style={{
-              padding: 6,
-              borderRadius: 8,
-              backgroundColor: COLORS.bgTertiary,
-              marginRight: 8,
-            }}
-          >
-            <ChevronRight size={16} color={COLORS.textSecondary} />
-          </Pressable>
-          <Pressable
-            onPress={handleRefresh}
-            hitSlop={10}
-            style={{
-              padding: 8,
-              borderRadius: 8,
-              backgroundColor: refreshing ? COLORS.accentSoftBg : COLORS.bgTertiary,
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: COLORS.bgSecondary,
               borderWidth: 1,
-              borderColor: refreshing ? COLORS.accentSoftBorder : COLORS.borderColor,
+              borderColor: COLORS.borderColor,
+              borderRadius: 12,
+              padding: 10,
+              marginBottom: 14,
             }}
           >
-            <RefreshCw size={16} color={refreshing ? COLORS.accent : COLORS.textSecondary} />
-          </Pressable>
-        </View>
+            <Pressable
+              onPress={() => setProductionDate(shiftDate(productionDate, -1))}
+              hitSlop={10}
+              style={{ padding: 6, borderRadius: 8, backgroundColor: COLORS.bgTertiary }}
+            >
+              <ChevronLeft size={16} color={COLORS.textSecondary} />
+            </Pressable>
+            <Pressable style={{ flex: 1, alignItems: 'center' }} onPress={() => setShowDatePicker(!showDatePicker)}>
+              <Text
+                style={{
+                  color: COLORS.textTertiary,
+                  fontFamily: FONTS.sansBold,
+                  fontSize: 10,
+                  letterSpacing: 1.5,
+                  textTransform: 'uppercase',
+                }}
+              >
+                Production Date
+              </Text>
+              <Text
+                style={{
+                  color: COLORS.textPrimary,
+                  fontFamily: FONTS.sansExtraBold,
+                  fontSize: 15,
+                  marginTop: 2,
+                }}
+              >
+                {formatDateReadable(productionDate)}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setProductionDate(shiftDate(productionDate, 1))}
+              disabled={productionDate === today}
+              hitSlop={10}
+              style={{
+                padding: 6,
+                borderRadius: 8,
+                backgroundColor: COLORS.bgTertiary,
+                marginRight: 8,
+                opacity: productionDate === today ? 0.3 : 1,
+              }}
+            >
+              <ChevronRight size={16} color={COLORS.textSecondary} />
+            </Pressable>
+            {productionDate !== today && (
+              <Pressable
+                onPress={() => setProductionDate(today)}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 8,
+                  backgroundColor: COLORS.accentSoftBg,
+                  borderWidth: 1,
+                  borderColor: COLORS.accentSoftBorder,
+                  marginRight: 8,
+                }}
+              >
+                <Text style={{ color: COLORS.accent, fontFamily: FONTS.sansBold, fontSize: 10 }}>TODAY</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={handleRefresh}
+              hitSlop={10}
+              style={{
+                padding: 8,
+                borderRadius: 8,
+                backgroundColor: refreshing ? COLORS.accentSoftBg : COLORS.bgTertiary,
+                borderWidth: 1,
+                borderColor: refreshing ? COLORS.accentSoftBorder : COLORS.borderColor,
+              }}
+            >
+              <RefreshCw size={16} color={refreshing ? COLORS.accent : COLORS.textSecondary} />
+            </Pressable>
+          </View>
+          {showDatePicker && (
+            <View style={{ marginBottom: 14, backgroundColor: COLORS.bgSecondary, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.borderColor }}>
+              <InlineDatePicker
+                label="Select Date"
+                value={productionDate}
+                onChange={(d) => {
+                  setProductionDate(d);
+                  setShowDatePicker(false);
+                }}
+                maxDate={today}
+              />
+            </View>
+          )}
+        </>
 
         {active.length > 0 && (
           <ScrollView
@@ -663,8 +793,7 @@ export default function ProductionScreen() {
           <CompactProductRow
             key={p.id}
             product={p}
-            monthStart={monthStart}
-            monthEnd={monthEnd}
+            productionDate={productionDate}
             onTap={() => router.push(`/product-detail/${p.id}`)}
             onUpdate={() => router.push(`/stock-update/${p.id}`)}
             onRetire={role === 'admin' ? () => setRetireTarget(p) : undefined}

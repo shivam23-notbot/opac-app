@@ -10,6 +10,7 @@ import { useAuthStore } from '@/store/authStore';
 import { subtractDays } from '@/lib/date';
 import type { AttendanceStatus } from '@/types';
 import { COLORS, FONTS } from '@/constants';
+import { PolymerBadge } from '@/components/PolymerBadge';
 
 function statusLabel(status: AttendanceStatus, night?: boolean): string {
   if (status === 'absent') return 'Absent';
@@ -234,6 +235,33 @@ export default function AdminDashboardScreen() {
         </View>
 
         <View style={{ gap: 16 }}>
+          <View style={{ marginBottom: 20 }}>
+            <Text
+              style={{
+                color: COLORS.textTertiary,
+                fontFamily: FONTS.sansBold,
+                fontSize: 11,
+                letterSpacing: 2,
+                textTransform: 'uppercase',
+                marginBottom: 14,
+              }}
+            >
+              Available Stock
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {products.filter(p => p.active !== false && p.currentBags > 0).map(p => (
+                <View key={p.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.bgSecondary, borderWidth: 1, borderColor: COLORS.borderColor, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12 }}>
+                  <PolymerBadge type={p.polymer} />
+                  <Text style={{ fontFamily: 'ui-monospace', fontSize: 12, fontWeight: '700', color: COLORS.textPrimary }}>{p.code}</Text>
+                  <Text style={{ fontFamily: FONTS.sansBold, fontSize: 13, color: COLORS.textPrimary }}>{p.currentBags} <Text style={{ fontSize: 10, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>bags</Text></Text>
+                </View>
+              ))}
+              {products.filter(p => p.active !== false && p.currentBags > 0).length === 0 && (
+                <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 13 }}>No active stock</Text>
+              )}
+            </View>
+          </View>
+
           <View
             style={{
               backgroundColor: COLORS.bgSecondary,

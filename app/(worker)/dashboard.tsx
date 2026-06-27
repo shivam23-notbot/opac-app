@@ -12,7 +12,7 @@ import { useDispatchStore } from '@/store/dispatchStore';
 import { useWorkersStore } from '@/store/workersStore';
 import { formatDateReadable, getGreeting, todayISO } from '@/lib/date';
 import { COLORS, FONTS } from '@/constants';
-import { polymerColor } from '@/components/PolymerBadge';
+import { polymerColor, PolymerBadge } from '@/components/PolymerBadge';
 
 function MiniStat({
   label,
@@ -373,6 +373,24 @@ export default function DashboardScreen() {
             );
           })}
         </View>
+
+        
+        <View style={{ marginTop: 28 }}>
+          <SectionLabel>Available Stock</SectionLabel>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {products.filter(p => p.active !== false && p.currentBags > 0).map(p => (
+              <View key={p.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.bgSecondary, borderWidth: 1, borderColor: COLORS.borderColor, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12 }}>
+                <PolymerBadge type={p.polymer} />
+                <Text style={{ fontFamily: 'ui-monospace', fontSize: 12, fontWeight: '700', color: COLORS.textPrimary }}>{p.code}</Text>
+                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 13, color: COLORS.textPrimary }}>{p.currentBags} <Text style={{ fontSize: 10, color: COLORS.textTertiary, fontFamily: FONTS.sansMedium }}>bags</Text></Text>
+              </View>
+            ))}
+            {products.filter(p => p.active !== false && p.currentBags > 0).length === 0 && (
+              <Text style={{ color: COLORS.textTertiary, fontFamily: FONTS.sansMedium, fontSize: 13, padding: 12 }}>No active stock</Text>
+            )}
+          </View>
+        </View>
+
 
         {/* Activity */}
         <View style={{ marginTop: 28 }}>

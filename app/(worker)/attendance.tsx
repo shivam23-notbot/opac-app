@@ -99,7 +99,7 @@ export default function AttendanceScreen() {
   const [newWageDate, setNewWageDate] = useState(todayISO());
 
   const records = getRecordsForDate(selectedDate);
-  const workers = getWorkersForDate(selectedDate);
+  const workers = getWorkersForDate(selectedDate).filter((w) => !w.settled);
   const markedCount = Object.keys(records).length;
   const total = workers.length;
   const allMarked = total > 0 && markedCount >= total;

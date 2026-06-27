@@ -5,6 +5,8 @@ import type { AttendanceStatus, AttendanceRecord, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
 import { supabase } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
+import { useWorkersStore } from './workersStore';
+import { useUiStore } from './uiStore';
 
 export type { SyncStatus };
 
@@ -111,6 +113,12 @@ export const useAttendanceStore = create<AttendanceState>()(
       },
 
       mark: (date, employeeId, status, userId, userName, overtimeHours) => {
+        const isSettled = useWorkersStore.getState().workers.find((w) => w.id === employeeId)?.settled;
+        if (isSettled) {
+          useUiStore.getState().showToast('error', 'Cannot edit attendance for settled workers');
+          return;
+        }
+
         const recordedAt = new Date().toISOString();
         const key = syncKey(date, employeeId);
         // When marking absent, clear night and overtime. Otherwise preserve existing night.
@@ -145,6 +153,12 @@ export const useAttendanceStore = create<AttendanceState>()(
       },
 
       unmark: (date, employeeId) => {
+        const isSettled = useWorkersStore.getState().workers.find((w) => w.id === employeeId)?.settled;
+        if (isSettled) {
+          useUiStore.getState().showToast('error', 'Cannot edit attendance for settled workers');
+          return;
+        }
+
         const key = syncKey(date, employeeId);
         set((state) => {
           const dateRecords = { ...(state.records[date] ?? {}) };
@@ -157,6 +171,12 @@ export const useAttendanceStore = create<AttendanceState>()(
       },
 
       toggleNight: (date, employeeId, userId, userName) => {
+        const isSettled = useWorkersStore.getState().workers.find((w) => w.id === employeeId)?.settled;
+        if (isSettled) {
+          useUiStore.getState().showToast('error', 'Cannot edit attendance for settled workers');
+          return;
+        }
+
         const recordedAt = new Date().toISOString();
         const key = syncKey(date, employeeId);
         const existing = get().records[date]?.[employeeId];

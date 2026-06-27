@@ -48,7 +48,7 @@ export default function StockUpdateScreen() {
   const showToast = useUiStore((s) => s.showToast);
 
   const [entryDate, setEntryDate] = useState(initialDate ?? today);
-  const [closingBags, setClosingBags] = useState('');
+  const [bagsProduced, setBagsProduced] = useState('');
   const [notes, setNotes] = useState('');
   const [materialsKg, setMaterialsKg] = useState<Record<string, string>>({});
 
@@ -62,7 +62,7 @@ export default function StockUpdateScreen() {
       const existing = product.stockHistory.find((e) => e.id === entryId);
       if (existing) {
         setEntryDate(existing.date);
-        setClosingBags(String(existing.closingBags));
+        setBagsProduced(String(existing.bagsProduced));
         setNotes(existing.notes ?? '');
         const matMap: Record<string, string> = {};
         existing.materialsUsed.forEach((mu) => { matMap[mu.materialId] = String(mu.kg); });
@@ -70,7 +70,7 @@ export default function StockUpdateScreen() {
       }
     } else {
       // Add mode: clear form when date changes.
-      setClosingBags('');
+      setBagsProduced('');
       setNotes('');
       setMaterialsKg({});
     }
@@ -108,17 +108,17 @@ export default function StockUpdateScreen() {
         a.date !== b.date ? a.date.localeCompare(b.date) : a.recordedAt.localeCompare(b.recordedAt)
       );
       const prev = [...sorted].reverse().find((e) => e.date <= entryDate);
-      openingBagsForDate = prev?.closingBags ?? 0;
+      openingBagsForDate = prev?.bagsProduced ?? 0;
     }
   }
 
   const isToday = entryDate === today;
-  const closingNum = parseFloat(closingBags) || 0;
-  const delta = closingBags !== '' ? closingNum - openingBagsForDate : null;
+  const bagsProducedNum = parseFloat(bagsProduced) || 0;
+  const delta = bagsProduced !== '' ? bagsProducedNum : null;
 
   const handleSave = () => {
-    if (closingBags.trim() === '' || closingNum < 0 || isNaN(closingNum)) {
-      showToast('error', 'Closing stock is required');
+    if (bagsProduced.trim() === '' || isNaN(bagsProducedNum)) {
+      showToast('error', 'Bags produced is required');
       return;
     }
 
@@ -128,7 +128,7 @@ export default function StockUpdateScreen() {
 
     if (isEditMode) {
       editProductionEntry(productId, entryId!, {
-        closingBags: Math.round(closingNum),
+        bagsProduced: Math.round(bagsProducedNum),
         materialsUsed: parsedMaterials,
         notes,
       });
@@ -138,12 +138,12 @@ export default function StockUpdateScreen() {
         action: 'edit_production',
         entity: 'production',
         entityId: productId,
-        detail: `Edited ${entryDate} entry: closing → ${Math.round(closingNum)} bags`,
+        detail: `Edited ${entryDate} entry: produced ${Math.round(bagsProducedNum)} bags`,
       });
       showToast('success', 'Production entry updated');
     } else {
       addProductionEntry(productId, {
-        closingBags: Math.round(closingNum),
+        bagsProduced: Math.round(bagsProducedNum),
         materialsUsed: parsedMaterials,
         notes,
         date: entryDate,
@@ -154,7 +154,7 @@ export default function StockUpdateScreen() {
         action: 'add_production',
         entity: 'production',
         entityId: productId,
-        detail: `${isToday ? 'Today' : entryDate} closing: ${Math.round(closingNum)} bags`,
+        detail: `${isToday ? 'Today' : entryDate} produced: ${Math.round(bagsProducedNum)} bags`,
       });
       showToast('success', 'Production recorded');
     }
@@ -254,15 +254,15 @@ export default function StockUpdateScreen() {
             readOnly
           />
           <TextField
-            label={isToday && !isEditMode ? "Today's Closing Stock" : 'Closing Stock'}
-            value={closingBags}
-            onChangeText={setClosingBags}
+            label={isToday && !isEditMode ? "Today's Bags Produced" : 'Bags Produced'}
+            value={bagsProduced}
+            onChangeText={setBagsProduced}
             keyboardType="numeric"
             placeholder="0"
             suffix="bags"
             hint={
-              closingBags !== ''
-                ? `= ${bagsToKg(closingNum).toLocaleString('en-IN')} kg`
+              bagsProduced !== ''
+                ? `= ${bagsToKg(bagsProducedNum).toLocaleString('en-IN')} kg`
                 : undefined
             }
             autoFocus={isToday && !isEditMode}

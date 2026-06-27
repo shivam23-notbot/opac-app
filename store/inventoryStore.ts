@@ -7,14 +7,14 @@ import { generateId } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
 interface AddProductionPayload {
-  closingBags: number;
+  bagsProduced: number;
   materialsUsed: MaterialUsage[];
   notes?: string;
-  date?: string; // omit for today; past dates add history without changing currentBags
+  date?: string;
 }
 
 interface EditProductionPayload {
-  closingBags: number;
+  bagsProduced: number;
   materialsUsed: MaterialUsage[];
   notes?: string;
 }
@@ -74,6 +74,7 @@ async function buildProducts(): Promise<Product[]> {
       .map((h) => ({
         id: h.id as string,
         date: h.date as string,
+        bagsProduced: Number(h.bags_produced),
         openingBags: Number(h.opening_bags),
         closingBags: Number(h.closing_bags),
         materialsUsed: h.materials_used as MaterialUsage[],
@@ -94,30 +95,34 @@ export const useInventoryStore = create<InventoryState>()(
         set({ products });
       },
 
-      addProductionEntry: (productId, { closingBags, materialsUsed, notes, date }) => {
+      addProductionEntry: (productId, { bagsProduced, materialsUsed, notes, date }) => {
         set((state) => ({
           products: state.products.map((p) => {
             if (p.id !== productId) return p;
             const today = todayISO();
             const entryDate = date ?? today;
-            const isToday = entryDate === today;
             const now = new Date().toISOString();
 
-            // Compute openingBags:
-            // Today → use currentBags (already accounts for prior production + dispatches).
-            // Past date → use the closing of the last entry on or before entryDate.
+            const sorted = sortedHistory(p.stockHistory);
+            const prev = [...sorted].reverse().find((e) => e.date <= entryDate);
+            // If there's a dispatch, it might have lowered currentBags. 
+            // Wait, openingBags of an entry is strictly derived from the PREVIOUS entry's closingBags, EXCEPT when dispatches happen.
+            // Dispatches reduce the openingBags of all subsequent entries. So using prev.closingBags is WRONG if a dispatch happened AFTER prev but BEFORE this new entry!
+            // Actually, in the current system, dispatches don't record a time or order relative to production entries on the same day. 
+            // The existing code did: "Today -> use currentBags. Past -> use prev closingBags."
             let openingBags: number;
-            if (isToday) {
+            if (entryDate === today && !date) {
               openingBags = p.currentBags;
             } else {
-              const sorted = sortedHistory(p.stockHistory);
-              const prev = [...sorted].reverse().find((e) => e.date <= entryDate);
               openingBags = prev?.closingBags ?? 0;
             }
+            
+            const closingBags = openingBags + bagsProduced;
 
             const entry = {
               id: generateId(),
               date: entryDate,
+              bagsProduced,
               openingBags,
               closingBags,
               materialsUsed,
@@ -126,11 +131,11 @@ export const useInventoryStore = create<InventoryState>()(
               recordedAt: now,
             };
 
-            // INSERT (never upsert by date — multiple entries per day are allowed).
             supabase.from('stock_history').insert({
               id: entry.id,
               product_id: productId,
               date: entryDate,
+              bags_produced: bagsProduced,
               opening_bags: openingBags,
               closing_bags: closingBags,
               materials_used: materialsUsed,
@@ -139,63 +144,92 @@ export const useInventoryStore = create<InventoryState>()(
             }).then(() => {});
 
             const newHistory = [...p.stockHistory, entry];
+            const newlySorted = sortedHistory(newHistory);
+            const idx = newlySorted.findIndex(e => e.id === entry.id);
+            const subsequent = newlySorted.slice(idx + 1);
+            
+            const historyUpdates: Record<string, { openingBags: number, closingBags: number }> = {};
+            let currentClosing = closingBags;
+            subsequent.forEach((e) => {
+              // the original code propagated a fixed delta to all subsequent openings. 
+              // we can just add bagsProduced to all subsequent openings and closings!
+              const newOpen = e.openingBags + bagsProduced;
+              const newClose = e.closingBags + bagsProduced;
+              historyUpdates[e.id] = { openingBags: newOpen, closingBags: newClose };
+              currentClosing = newClose; // not strictly needed since we just add delta
+            });
 
-            if (isToday) {
-              supabase
-                .from('products')
-                .update({ current_bags: closingBags, last_updated: now })
-                .eq('id', productId).then(() => {});
-              return { ...p, currentBags: closingBags, lastUpdated: now, stockHistory: newHistory };
-            }
-            return { ...p, lastUpdated: now, stockHistory: newHistory };
+            const finalHistory = newHistory.map((h) => 
+              historyUpdates[h.id] ? { ...h, openingBags: historyUpdates[h.id].openingBags, closingBags: historyUpdates[h.id].closingBags } : h
+            );
+
+            Object.entries(historyUpdates).forEach(([id, vals]) => {
+              supabase.from('stock_history').update({
+                opening_bags: vals.openingBags,
+                closing_bags: vals.closingBags
+              }).eq('id', id).then(() => {});
+            });
+
+            const newCurrentBags = p.currentBags + bagsProduced;
+
+            supabase
+              .from('products')
+              .update({ current_bags: newCurrentBags, last_updated: now })
+              .eq('id', productId).then(() => {});
+
+            return { ...p, currentBags: newCurrentBags, lastUpdated: now, stockHistory: finalHistory };
           }),
         }));
       },
 
-      editProductionEntry: (productId, entryId, { closingBags, materialsUsed, notes }) => {
+      editProductionEntry: (productId, entryId, { bagsProduced, materialsUsed, notes }) => {
         set((state) => ({
           products: state.products.map((p) => {
             if (p.id !== productId) return p;
             const entry = p.stockHistory.find((e) => e.id === entryId);
             if (!entry) return p;
 
-            const delta = closingBags - entry.closingBags;
+            const delta = bagsProduced - entry.bagsProduced;
+            const closingBags = entry.openingBags + bagsProduced;
             const now = new Date().toISOString();
 
-            // Find the immediately next entry in chain order to propagate the delta.
             const sorted = sortedHistory(p.stockHistory);
             const idx = sorted.findIndex((e) => e.id === entryId);
-            const nextEntry = idx >= 0 ? sorted[idx + 1] : undefined;
-            const isLast = !nextEntry;
+            const subsequent = sorted.slice(idx + 1);
+            
+            const historyUpdates: Record<string, { openingBags: number, closingBags: number }> = {};
+            subsequent.forEach((e) => {
+              historyUpdates[e.id] = { openingBags: e.openingBags + delta, closingBags: e.closingBags + delta };
+            });
 
             const newHistory = p.stockHistory.map((e) => {
-              if (e.id === entryId) return { ...e, closingBags, materialsUsed, notes };
-              if (nextEntry && e.id === nextEntry.id) return { ...e, openingBags: e.openingBags + delta };
+              if (e.id === entryId) return { ...e, bagsProduced, closingBags, materialsUsed, notes };
+              if (historyUpdates[e.id]) return { ...e, openingBags: historyUpdates[e.id].openingBags, closingBags: historyUpdates[e.id].closingBags };
               return e;
             });
 
-            // Supabase: update the edited entry.
             supabase.from('stock_history').update({
+              bags_produced: bagsProduced,
               closing_bags: closingBags,
               materials_used: materialsUsed,
               notes,
             }).eq('id', entryId).then(() => {});
 
-            // Propagate delta to the immediate next entry's opening.
-            if (nextEntry) {
+            Object.entries(historyUpdates).forEach(([id, vals]) => {
               supabase.from('stock_history').update({
-                opening_bags: nextEntry.openingBags + delta,
-              }).eq('id', nextEntry.id).then(() => {});
-            }
+                opening_bags: vals.openingBags,
+                closing_bags: vals.closingBags
+              }).eq('id', id).then(() => {});
+            });
 
-            if (isLast) {
-              supabase
-                .from('products')
-                .update({ current_bags: closingBags, last_updated: now })
-                .eq('id', productId).then(() => {});
-              return { ...p, currentBags: closingBags, lastUpdated: now, stockHistory: newHistory };
-            }
-            return { ...p, lastUpdated: now, stockHistory: newHistory };
+            const newCurrentBags = p.currentBags + delta;
+            
+            supabase
+              .from('products')
+              .update({ current_bags: newCurrentBags, last_updated: now })
+              .eq('id', productId).then(() => {});
+            
+            return { ...p, currentBags: newCurrentBags, lastUpdated: now, stockHistory: newHistory };
           }),
         }));
       },
@@ -203,11 +237,12 @@ export const useInventoryStore = create<InventoryState>()(
       decrementStock: (productId, bags, dispatchDate?) => {
         const now = new Date().toISOString();
         const currentProduct = get().products.find((p) => p.id === productId);
-        const historyUpdates: Record<string, number> = {};
+        const historyUpdates: Record<string, { openingBags: number, closingBags: number }> = {};
         if (dispatchDate && currentProduct) {
           currentProduct.stockHistory.forEach((h) => {
             if (h.date > dispatchDate) {
-              historyUpdates[h.id] = Math.max(0, h.openingBags - bags);
+              const newOpen = Math.max(0, h.openingBags - bags);
+              historyUpdates[h.id] = { openingBags: newOpen, closingBags: newOpen + h.bagsProduced };
             }
           });
         }
@@ -218,7 +253,7 @@ export const useInventoryStore = create<InventoryState>()(
               Object.keys(historyUpdates).length > 0
                 ? p.stockHistory.map((h) =>
                     historyUpdates[h.id] !== undefined
-                      ? { ...h, openingBags: historyUpdates[h.id] }
+                      ? { ...h, openingBags: historyUpdates[h.id].openingBags, closingBags: historyUpdates[h.id].closingBags }
                       : h
                   )
                 : p.stockHistory;
@@ -232,19 +267,20 @@ export const useInventoryStore = create<InventoryState>()(
             .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
-        Object.entries(historyUpdates).forEach(([id, newOpeningBags]) => {
-          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', id).then(() => {});
+        Object.entries(historyUpdates).forEach(([id, vals]) => {
+          supabase.from('stock_history').update({ opening_bags: vals.openingBags, closing_bags: vals.closingBags }).eq('id', id).then(() => {});
         });
       },
 
       restoreStock: (productId, bags, dispatchDate?) => {
         const now = new Date().toISOString();
         const currentProduct = get().products.find((p) => p.id === productId);
-        const historyUpdates: Record<string, number> = {};
+        const historyUpdates: Record<string, { openingBags: number, closingBags: number }> = {};
         if (dispatchDate && currentProduct) {
           currentProduct.stockHistory.forEach((h) => {
             if (h.date > dispatchDate) {
-              historyUpdates[h.id] = h.openingBags + bags;
+              const newOpen = h.openingBags + bags;
+              historyUpdates[h.id] = { openingBags: newOpen, closingBags: newOpen + h.bagsProduced };
             }
           });
         }
@@ -255,7 +291,7 @@ export const useInventoryStore = create<InventoryState>()(
               Object.keys(historyUpdates).length > 0
                 ? p.stockHistory.map((h) =>
                     historyUpdates[h.id] !== undefined
-                      ? { ...h, openingBags: historyUpdates[h.id] }
+                      ? { ...h, openingBags: historyUpdates[h.id].openingBags, closingBags: historyUpdates[h.id].closingBags }
                       : h
                   )
                 : p.stockHistory;
@@ -269,8 +305,8 @@ export const useInventoryStore = create<InventoryState>()(
             .update({ current_bags: product.currentBags, last_updated: now })
             .eq('id', productId).then(() => {});
         }
-        Object.entries(historyUpdates).forEach(([id, newOpeningBags]) => {
-          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', id).then(() => {});
+        Object.entries(historyUpdates).forEach(([id, vals]) => {
+          supabase.from('stock_history').update({ opening_bags: vals.openingBags, closing_bags: vals.closingBags }).eq('id', id).then(() => {});
         });
       },
 
@@ -281,7 +317,7 @@ export const useInventoryStore = create<InventoryState>()(
         if (!p) return 0;
         return p.stockHistory
           .filter((e) => e.date === todayISO())
-          .reduce((s, e) => s + Math.max(0, e.closingBags - e.openingBags), 0);
+          .reduce((s, e) => s + e.bagsProduced, 0);
       },
 
       addProduct: ({ id, code, name, polymer, currentBags, entryDate, recordedBy }) => {
@@ -293,6 +329,7 @@ export const useInventoryStore = create<InventoryState>()(
                 {
                   id: generateId(),
                   date,
+                  bagsProduced: currentBags,
                   openingBags: 0,
                   closingBags: currentBags,
                   materialsUsed: [],
@@ -327,6 +364,7 @@ export const useInventoryStore = create<InventoryState>()(
             id: initialEntry[0].id,
             product_id: id,
             date,
+            bags_produced: currentBags,
             opening_bags: 0,
             closing_bags: currentBags,
             materials_used: [],
@@ -342,33 +380,30 @@ export const useInventoryStore = create<InventoryState>()(
         const entry = currentProduct.stockHistory.find((e) => e.id === entryId);
         if (!entry) return;
 
-        const productionDelta = entry.closingBags - entry.openingBags;
+        const productionDelta = entry.bagsProduced;
         const now = new Date().toISOString();
 
-        // Find immediate next entry in chain order.
         const sorted = sortedHistory(currentProduct.stockHistory);
         const idx = sorted.findIndex((e) => e.id === entryId);
-        const nextEntry = idx >= 0 ? sorted[idx + 1] : undefined;
-        const isLast = !nextEntry;
+        const subsequent = sorted.slice(idx + 1);
+
+        const historyUpdates: Record<string, { openingBags: number, closingBags: number }> = {};
+        subsequent.forEach((e) => {
+          historyUpdates[e.id] = { openingBags: Math.max(0, e.openingBags - productionDelta), closingBags: Math.max(0, e.closingBags - productionDelta) };
+        });
 
         set((state) => ({
           products: state.products.map((p) => {
             if (p.id !== productId) return p;
             const remaining = p.stockHistory.filter((e) => e.id !== entryId);
 
-            // Shift only the immediate next entry's opening by -productionDelta.
-            const finalHistory = nextEntry
-              ? remaining.map((h) =>
-                  h.id === nextEntry.id
-                    ? { ...h, openingBags: Math.max(0, h.openingBags - productionDelta) }
-                    : h
-                )
-              : remaining;
+            const finalHistory = remaining.map((h) =>
+              historyUpdates[h.id] !== undefined
+                ? { ...h, openingBags: historyUpdates[h.id].openingBags, closingBags: historyUpdates[h.id].closingBags }
+                : h
+            );
 
-            // If deleting the last entry, roll currentBags back by productionDelta.
-            const finalBags = isLast
-              ? Math.max(0, p.currentBags - productionDelta)
-              : p.currentBags;
+            const finalBags = Math.max(0, p.currentBags - productionDelta);
 
             return { ...p, currentBags: finalBags, stockHistory: finalHistory, lastUpdated: now };
           }),
@@ -376,20 +411,17 @@ export const useInventoryStore = create<InventoryState>()(
 
         supabase.from('stock_history').delete().eq('id', entryId).then(() => {});
 
-        if (isLast) {
-          const updatedProduct = get().products.find((p) => p.id === productId);
-          if (updatedProduct) {
-            supabase
-              .from('products')
-              .update({ current_bags: updatedProduct.currentBags, last_updated: now })
-              .eq('id', productId).then(() => {});
-          }
+        const updatedProduct = get().products.find((p) => p.id === productId);
+        if (updatedProduct) {
+          supabase
+            .from('products')
+            .update({ current_bags: updatedProduct.currentBags, last_updated: now })
+            .eq('id', productId).then(() => {});
         }
 
-        if (nextEntry) {
-          const newOpeningBags = Math.max(0, nextEntry.openingBags - productionDelta);
-          supabase.from('stock_history').update({ opening_bags: newOpeningBags }).eq('id', nextEntry.id).then(() => {});
-        }
+        Object.entries(historyUpdates).forEach(([id, vals]) => {
+          supabase.from('stock_history').update({ opening_bags: vals.openingBags, closing_bags: vals.closingBags }).eq('id', id).then(() => {});
+        });
       },
 
       retireProduct: (productId) => {

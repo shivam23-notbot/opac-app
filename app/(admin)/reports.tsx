@@ -27,6 +27,7 @@ import { bagsToKg } from '@/lib/units';
 import { subtractDays, todayISO } from '@/lib/date';
 import type { Worker } from '@/types';
 import { COLORS, FONTS } from '@/constants';
+import { PolymerBadge } from '@/components/PolymerBadge';
 import {
   Lock,
   Unlock,
@@ -361,8 +362,8 @@ export default function ReportsScreen() {
           productName: p.name,
           openingBags: h.openingBags,
           closingBags: h.closingBags,
-          delta: h.closingBags - h.openingBags,
-          deltaKg: bagsToKg(h.closingBags - h.openingBags),
+          delta: h.bagsProduced,
+          deltaKg: bagsToKg(h.bagsProduced),
           recordedBy: h.recordedBy ? displayNameFor(h.recordedBy) : '—',
         }))
     )

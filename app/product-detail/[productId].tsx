@@ -133,29 +133,27 @@ export default function ProductDetailScreen() {
   const productDispatches = getDispatchesByProduct(productId);
   const retired = product.currentBags === 0;
   const totalProduced = product.stockHistory.reduce(
-    (s, h) => s + Math.max(0, h.closingBags - h.openingBags),
+    (s, h) => s + h.bagsProduced,
     0
   );
   const totalDispatched = productDispatches.reduce((s, d) => s + d.bags, 0);
 
   const events: Event[] = [];
   product.stockHistory.forEach((h) => {
-    const delta = h.closingBags - h.openingBags;
+    const produced = h.bagsProduced;
     events.push({
       kind: 'stock',
       entryId: h.id,
       date: h.date,
       sortKey: h.recordedAt,
       title:
-        delta === 0
-          ? 'Stock adjusted'
-          : delta > 0
-            ? `Produced +${delta} bags`
-            : `Adjusted ${delta} bags`,
-      sub: `${h.openingBags} → ${h.closingBags} bags${h.notes ? ` · ${h.notes}` : ''}`,
+        produced === 0
+          ? 'Stock recorded (no production)'
+          : `Produced +${produced} bags`,
+      sub: `Closing stock: ${h.closingBags} bags${h.notes ? ` · ${h.notes}` : ''}`,
       meta: h.materialsUsed && h.materialsUsed.length ? h.materialsUsed : null,
       by: h.recordedBy ? displayNameFor(h.recordedBy) : '—',
-      color: delta > 0 ? COLORS.accent : delta < 0 ? COLORS.warning : COLORS.textSecondary,
+      color: produced > 0 ? COLORS.accent : COLORS.textSecondary,
     });
   });
   productDispatches.forEach((d) => {
