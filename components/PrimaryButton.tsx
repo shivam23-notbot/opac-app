@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, Text, ActivityIndicator, Platform, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+
 import { FONTS } from '@/constants';
 
 type Size = 'sm' | 'md' | 'lg';
@@ -34,7 +34,7 @@ export function PrimaryButton({
 
   const handlePress = () => {
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     }
     onPress();
   };

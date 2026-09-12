@@ -1,5 +1,5 @@
 import { Pressable, Text, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+
 import { COLORS, FONTS } from '@/constants';
 
 interface PillButtonProps {
@@ -12,7 +12,7 @@ interface PillButtonProps {
 export function PillButton({ label, selected, onPress, color = COLORS.accent }: PillButtonProps) {
   const handlePress = () => {
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     }
     onPress();
   };

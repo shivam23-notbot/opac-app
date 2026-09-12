@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Text, Platform, Animated, View, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
+
 import { useUiStore } from '@/store/uiStore';
 import { COLORS, FONTS } from '@/constants';
 
@@ -14,13 +14,7 @@ export default function Toast() {
 
   useEffect(() => {
     if (toast) {
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(
-          toast.type === 'error'
-            ? Haptics.NotificationFeedbackType.Error
-            : Haptics.NotificationFeedbackType.Success
-        );
-      }
+
       Animated.parallel([
         Animated.timing(translateY, {
           toValue: 0,

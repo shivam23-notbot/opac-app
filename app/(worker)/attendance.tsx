@@ -27,7 +27,7 @@ import {
   Pencil,
   TrendingUp,
 } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+
 import { COLORS, FONTS } from '@/constants';
 
 
@@ -125,7 +125,7 @@ export default function AttendanceScreen() {
       showToast('error', 'Cannot edit entries older than 3 days');
       return;
     }
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     mark(selectedDate, workerId, status, user!.id, user!.name, overtimeHours);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
     const currentNightAfter = status === 'absent' ? false : (records[workerId]?.night ?? false);
@@ -144,7 +144,7 @@ export default function AttendanceScreen() {
       showToast('error', 'Cannot edit entries older than 3 days');
       return;
     }
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     unmark(selectedDate, workerId);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
     logAudit({
@@ -162,7 +162,7 @@ export default function AttendanceScreen() {
       showToast('error', 'Cannot edit entries older than 3 days');
       return;
     }
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     toggleNight(selectedDate, workerId, user!.id, user!.name);
     const workerName = workers.find((w) => w.id === workerId)?.name ?? workerId;
     const rec = records[workerId];
