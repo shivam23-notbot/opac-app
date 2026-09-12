@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AttendanceStatus, AttendanceRecord, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
 import { useWorkersStore } from './workersStore';
 import { useUiStore } from './uiStore';
@@ -92,7 +92,7 @@ export const useAttendanceStore = create<AttendanceState>()(
       setHasHydrated: (value) => set({ _hasHydrated: value }),
 
       hydrate: async () => {
-        const { data } = await supabase.from('attendance').select('*');
+        const { data } = await fetchAll('attendance');
         if (!data) return;
         const records: Record<string, Record<string, AttendanceRecord>> = {};
         for (const row of data) {

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { UserRole } from '@/types';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 
 export interface AppUser {
   id: string;
@@ -46,9 +46,9 @@ export const useUsersStore = create<UsersState>()(
       _synced: false,
 
       hydrate: async () => {
-        const { data, error } = await supabase
-          .from('app_users')
-          .select('id, email, name, role');
+        const { data, error } = await fetchAll('app_users', {
+          select: 'id, email, name, role'
+        });
         if (error || !data) return;
         set({ users: data.map(rowToUser), _synced: true });
       },

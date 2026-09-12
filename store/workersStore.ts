@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Worker, AdvancePayment, WageEntry } from '@/types';
 import { generateId } from '@/lib/utils';
 import { todayISO } from '@/lib/date';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 
 interface WorkersState {
   workers: Worker[];
@@ -84,8 +84,8 @@ export const useWorkersStore = create<WorkersState>()(
 
       hydrate: async () => {
         const [{ data: wData }, { data: aData }] = await Promise.all([
-          supabase.from('workers').select('*'),
-          supabase.from('advances').select('*'),
+          fetchAll('workers'),
+          fetchAll('advances'),
         ]);
         set({
           workers: (wData ?? []).map(rowToWorker),

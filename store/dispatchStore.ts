@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DispatchEntry, SyncStatus } from '@/types';
 import { todayISO } from '@/lib/date';
 import { useInventoryStore } from './inventoryStore';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 
 export type { SyncStatus };
 
@@ -57,7 +57,7 @@ export const useDispatchStore = create<DispatchState>()(
       syncStatus: {},
 
       hydrate: async () => {
-        const { data } = await supabase.from('dispatch_entries').select('*');
+        const { data } = await fetchAll('dispatch_entries');
         if (!data) return;
         set({ entries: data.map(rowToEntry), syncStatus: {} });
       },

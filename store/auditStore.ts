@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AuditLog } from '@/types';
 import { generateId } from '@/lib/utils';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 
 export const AUDIT_LOG_RETENTION_DAYS = 90;
 
@@ -28,11 +28,10 @@ export const useAuditStore = create<AuditState>()(
 
       hydrate: async () => {
         const cutoff = new Date(Date.now() - AUDIT_LOG_RETENTION_DAYS * 86400000).toISOString();
-        const { data } = await supabase
-          .from('audit_logs')
-          .select('*')
-          .gte('timestamp', cutoff)
-          .order('timestamp', { ascending: false });
+        const { data } = await fetchAll('audit_logs', {
+          gte: { column: 'timestamp', value: cutoff },
+          order: { column: 'timestamp', ascending: false }
+        });
         if (!data) return;
         set({
           logs: data.map((row) => ({

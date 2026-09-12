@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Product, MaterialUsage } from '@/types';
 import { todayISO } from '@/lib/date';
 import { generateId } from '@/lib/utils';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAll } from '@/lib/supabase';
 
 interface AddProductionPayload {
   bagsProduced: number;
@@ -57,8 +57,8 @@ function sortedHistory(history: Product['stockHistory']) {
 
 async function buildProducts(): Promise<Product[]> {
   const [{ data: prods }, { data: history }] = await Promise.all([
-    supabase.from('products').select('*'),
-    supabase.from('stock_history').select('*'),
+    fetchAll('products'),
+    fetchAll('stock_history'),
   ]);
   if (!prods) return [];
   return prods.map((p) => ({
